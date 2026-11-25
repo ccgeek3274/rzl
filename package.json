@@ -1,0 +1,39 @@
+{
+  "name": "rzl",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n worker,web \"npm:dev:worker\" \"npm:dev:web\"",
+    "dev:worker": "wrangler dev --port 8788",
+    "dev:web": "vite",
+    "build": "vite build",
+    "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.worker.json --noEmit",
+    "test": "vitest run",
+    "db:migrate:local": "wrangler d1 migrations apply rzl-db --local",
+    "db:reset:local": "rm -rf .wrangler/state/v3/d1 && wrangler d1 migrations apply rzl-db --local",
+    "db:seed:local": "wrangler d1 execute rzl-db --local --file=data/seed-2025-26.sql",
+    "db:fresh:local": "npm run db:reset:local && npm run db:seed:local && wrangler d1 execute rzl-db --local --file=data/reset-identity.sql"
+  },
+  "dependencies": {
+    "@ant-design/icons": "^6.3.4",
+    "@tanstack/react-query": "^5.108.2",
+    "antd": "^6.7.1",
+    "dayjs": "^1.11.23",
+    "hono": "^4.13.20",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.6"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261121.1",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.7.0",
+    "concurrently": "^9.2.5",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.6",
+    "vitest": "^4.1.12",
+    "wrangler": "^4.166.0"
+  }
+}

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+*.log
+.DS_Store
+
+# Personal data of players (minors): local only, never in the public repo
+data/seed-*.sql
+doc/source/
+doc/private/
+shared/__tests__/fixtures/
