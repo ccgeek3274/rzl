@@ -43,6 +43,15 @@ Pravidla a ověření proti oficiálním PDF: `doc/pravidla.md`. Zdrojová PDF: 
   `ok` (potvrzeno). Nová instance: LOK hráče v evidenci + podobné jméno → `auto`; LOK z jiné instance hráče → `auto`;
   jinak podobný hráč → `open` s kandidáty; nikdo podobný → nový hráč `auto`. Řádek bez LOK se nikdy nepřiřadí jen podle jména.
 - `entries.match = 'manual'` = výjimka jen pro jeden řádek (řádek nesleduje svou instanci). Jiné hodnoty už se nepoužívají.
+- **LOK s jiným jménem na chess.cz** (`shared/lokcheck.ts`, `decideLok`, tabulka `lok_verdicts`). Hrál vždy ten, kdo je
+  jménem v turnaji (podle jména se losuje a usazuje); rozhoduje se jen, komu patří LOK – jednou za LOK, verdikt:
+  `cz` = platí chess.cz (změna jména, výjimečně hrála ta osoba; jméno/pohlaví/rok z chess.cz), `cz-error` = LOK patří hráči
+  z turnaje, chess.cz má chybné jméno (LOK zůstane kvůli Elu; jméno a pohlaví z chess.cz se nikdy nepřebírají, info v Kontrole
+  „nahlásit“), `bad-lok` = chybné LOK v turnaji (hráč bez LOK). Nepotvrzený hráč (vše `auto`) se po načtení z chess.cz vrátí
+  do `open` (`reopenOnLokConflict`) a zůstane jen jako držitel LOK. Párování ukáže záznam chess.cz pod turnajem a stopy
+  (duplicitní jméno v oddíle, abecední dávka registrací – sousední LOK, rok z karty, pohlaví podle jména, křestní jméno);
+  „Doplnit údaje hráčů“ k tomu načte detail LOK a seznam oddílu. Hráč bez LOK převezme LOK z instance jen při shodě
+  jména na chess.cz nebo verdiktu `cz` / `cz-error`.
 - Instance si pamatuje LOK tak, jak ho napsal turnaj (může být cizí). Ruční změna LOK hráče jen opraví evidenci; další
   turnaje s chybným LOK najdou hráče přes jeho instanci. Při přiřazení instance s LOK hráči bez LOK hráč LOK převezme.
 - Přehrání 2025/26 (`shared/__tests__/identity.test.ts`) ověřuje, že automatika nikdy nepřiřadí proti odladěným datům
@@ -55,6 +64,10 @@ Pravidla a ověření proti oficiálním PDF: `doc/pravidla.md`. Zdrojová PDF: 
 - chess.cz API vrací pohlaví `M` / `Ž` → normalizuje se na `M` / `F` (`normGender` v `worker/lib/chesscz.ts`).
 - RŽL ID hráče = `players.id` (AUTOINCREMENT, nikdy se nerecykluje), zobrazované jako `R0079` (`rzlId` v `shared/text.ts`);
   instance `I0412` (`instId`). Sloučení = přesun instancí, zůstává ID cílového hráče. Hráč bez instancí a řádků se maže (`dropIfOrphan`).
+- Jeden hráč hraje v kole jen jeden turnaj: kandidát, který hraje ve stejném kole jako instance, je „jiný hráč“ (jistota 0, bez
+  „Je to on(a)“), a dvojice hráčů ze stejného kola se v Kontrole nehlásí jako duplicita (`roundsByPlayer`, `sharedRound`).
+  Když tím vypadnou všichni kandidáti otevřené instance, je to nový hráč `auto` (ke kontrole) – `resolveRuledOut` po každém
+  importu turnaje a na začátku „Doplnit údaje hráčů“.
 - Duplicity (`seasonIssues`): hráči sezóny × všichni hráči v DB, pokud nemají oba LOK; podobnost jmen `similarNames`
   (shoda / prohozené pořadí / překlep / jméno navíc); známý rozdílný rok narození pár vyřadí. Volba „Nový hráč“ u otevřené
   instance upozornění vůči jejím kandidátům rovnou odklikne.
@@ -62,4 +75,6 @@ Pravidla a ověření proti oficiálním PDF: `doc/pravidla.md`. Zdrojová PDF: 
 - Kontrola: chyby (červené) a odhadnuté pohlaví nejde „odkliknout“ (`isAckable`), musí se vyřešit; odhady pohlaví mají
   vlastní kartu s hromadným potvrzením (`POST /seasons/:id/genders`). Nenačtené turnaje ani „ke kontrole“ z Párování
   v Kontrole nejsou (mají vlastní záložky); nerozhodnuté instance jsou jedna souhrnná chyba `inst-open`.
+- Historie rozhodnutí (Kontrola → Historie): každé rozhodnutí / oprava v API zapíše řádek do `decision_log` (`logDecision`
+  v `worker/lib/log.ts`) – párování, LOK, pohlaví, řádky, „V pořádku“, hráč, oddíl, sloučení. Nová akce = přidat zápis.
 - Příslušnost k regionu: hráč (override) → oddíl/místo → nerozhodnuto (= nepočítá se + chyba v Kontrole).

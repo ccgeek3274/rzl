@@ -1,3 +1,4 @@
+import type { LokHints } from './lokcheck';
 // API shapes shared by worker and web.
 import type { CrGame } from './chessresults';
 import type { InstanceHow, InstanceStatus } from './identity';
@@ -60,6 +61,8 @@ export type SeasonDto = {
 
 export type StandingDto = {
   playerId: number;
+  /** Other names the player appears under in tournaments (name change, typos). */
+  otherNames: string[];
   rank: number;
   tied: boolean;
   total: number;
@@ -110,6 +113,8 @@ export type TournamentDetailDto = { tournament: TournamentDto; round: RoundDto; 
 
 export type SeasonPlayerDto = {
   id: number;
+  /** Other names the player appears under in tournaments (name change, typos). */
+  otherNames: string[];
   lokId: number | null;
   surname: string;
   firstName: string;
@@ -156,7 +161,21 @@ export type PlayerDetailDto = {
     eloBefore: number | null;
     eloDelta: number | null;
     eloAfter: number | null;
+    /** RŽL points / placement of the row (null = not in the standings, e.g. outside the region or excluded). */
+    rzl: { points: number; placement: number; counted: boolean } | null;
+    games: PlayerGameDto[];
   }[];
+};
+
+/** One round of a tournament row: game, forfeit or bye, with the opponent as written in the tournament. */
+export type PlayerGameDto = {
+  round: number;
+  kind: CrGame['kind'];
+  color: 'w' | 'b' | null;
+  score: number | null;
+  oppName: string | null;
+  oppRtg: number | null;
+  oppPlayerId: number | null;
 };
 
 export type ClubDto = { id: number; name: string; fullName: string; region: 'in' | 'out' | null; note: string | null; aliases: string[]; players: number };
@@ -211,10 +230,24 @@ export type InstanceDto = {
   recycled: boolean;
   rows: { entryId: number; tournamentId: number; linkName: string; round: number; grp: string; snr: number; rank: number; points: number; mark: string | null; manual: boolean }[];
   player: PlayerBriefDto | null;
+  /**
+   * The assigned player's LOK and club as of this instance: before it (an earlier instance exists) or as created from it
+   * (`created`, the first of several instances). null = the player's only instance – shown as they are now.
+   */
+  before: { created: boolean; lokId: number | null; club: string | null; clubId: number | null } | null;
   /** What differs from the player's other instances / record ("oddíl: Vlašim → Benešov"). */
   changes: string[];
-  candidates: { player: PlayerBriefDto; why: string }[];
+  /** sameRound: the candidate plays in the same round as this instance ("3B") – cannot be the same person. */
+  candidates: { player: PlayerBriefDto; why: string; sameRound: string | null }[];
+  /** Open instance whose LOK chess.cz registers under another name (no verdict yet): decide first whose the LOK is. */
+  lokCheck: LokCheckDto | null;
 };
+
+export type LokCheckDto = {
+  lokId: number;
+  cz: { fullName: string; gender: string; birthYear: number | null; clubName: string | null; czeStdElo: number; czeRapidElo: number; registration: string | null };
+  clubLoaded: boolean;
+} & LokHints;
 
 /** What is kept from chess.cz for a registered player (players.chesscz JSON). Elo 0 / missing = none. */
 export type ChessczInfo = {
@@ -230,4 +263,16 @@ export type ChessczInfo = {
   fideStdElo?: number;
   fideRapidElo?: number;
   fideBlitzElo?: number;
+};
+
+/** One decision / correction of the operator (Kontrola → Historie). */
+export type HistoryDto = {
+  id: number;
+  at: number;
+  kind: string; // pairing | lok | gender | entry | ack | club | player | merge
+  title: string;
+  detail: string | null;
+  playerId: number | null;
+  tournamentId: number | null;
+  instanceId: number | null;
 };

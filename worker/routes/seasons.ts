@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
 import { mergeSettings } from '../../shared/rzl';
-import type { SeasonDto, SeasonSummary, TournamentDto } from '../../shared/types';
+import type { HistoryDto, SeasonDto, SeasonSummary, TournamentDto } from '../../shared/types';
 import { fail, now } from '../lib/http';
+import { logDecision, playerLabel } from '../lib/log';
 import { discover } from '../lib/importer';
 import { getSeason, loadSeason, seasonIssues, standingsView, type TournamentRow } from '../lib/season';
 import { seasonPlayersView } from './players';
@@ -53,8 +54,9 @@ seasons.post('/', async (c) => {
   if (!tnr) fail(400, 'Zadejte číslo turnaje nebo odkaz na chess-results');
   const dup = await c.env.DB.prepare('SELECT id FROM seasons WHERE seed_tnr = ?').bind(tnr).first();
   if (dup) fail(409, 'Sezóna s tímto turnajem už existuje');
-  const res = await c.env.DB.prepare('INSERT INTO seasons (name, start_year, seed_tnr, created_at) VALUES (?, ?, ?, ?)')
-    .bind(body.name?.trim() ?? '', body.startYear ?? new Date().getFullYear(), tnr, now())
+  // New seasons rank HD8 separately by default (can be switched off in the season settings).
+  const res = await c.env.DB.prepare('INSERT INTO seasons (name, start_year, seed_tnr, settings, created_at) VALUES (?, ?, ?, ?, ?)')
+    .bind(body.name?.trim() ?? '', body.startYear ?? new Date().getFullYear(), tnr, JSON.stringify({ hd8: true }), now())
     .run();
   const id = Number(res.meta.last_row_id);
   const season = await getSeason(c.env.DB, id);
@@ -134,9 +136,25 @@ seasons.get('/:id/issues', async (c) => {
   return c.json(seasonIssues(L));
 });
 
+/** History of decisions (newest first); entries without a season (clubs, LOK verdicts) belong to every season. */
+seasons.get('/:id/history', async (c) => {
+  const rows = await c.env.DB.prepare(
+    `SELECT id, at, kind, title, detail, player_id, tournament_id, instance_id FROM decision_log
+     WHERE season_id = ? OR season_id IS NULL ORDER BY at DESC, id DESC LIMIT 2000`
+  )
+    .bind(Number(c.req.param('id')))
+    .all<{ id: number; at: number; kind: string; title: string; detail: string | null; player_id: number | null; tournament_id: number | null; instance_id: number | null }>();
+  return c.json(
+    rows.results.map(
+      (r): HistoryDto => ({ id: r.id, at: r.at, kind: r.kind, title: r.title, detail: r.detail, playerId: r.player_id, tournamentId: r.tournament_id, instanceId: r.instance_id })
+    )
+  );
+});
+
 seasons.post('/:id/issues/ack', async (c) => {
-  const { key, acked } = await c.req.json<{ key: string; acked: boolean }>();
+  const { key, acked, title } = await c.req.json<{ key: string; acked: boolean; title?: string }>();
   const id = Number(c.req.param('id'));
+  await logDecision(c.env.DB, { seasonId: id, kind: 'ack', title: `${acked ? 'V pořádku' : 'Vráceno mezi upozornění'}: ${title ?? key}` });
   if (acked) await c.env.DB.prepare('INSERT OR IGNORE INTO issue_acks (season_id, issue_key, created_at) VALUES (?, ?, ?)').bind(id, key, now()).run();
   else await c.env.DB.prepare('DELETE FROM issue_acks WHERE season_id = ? AND issue_key = ?').bind(id, key).run();
   return c.json({ ok: true });
@@ -148,6 +166,8 @@ seasons.post('/:id/genders', async (c) => {
   if (!Array.isArray(items) || !items.length) fail(400, 'Nic k uložení');
   const db = c.env.DB;
   await db.batch(items.filter((i) => i.gender === 'M' || i.gender === 'F').map((i) => db.prepare("UPDATE players SET gender = ?, gender_source = 'manual' WHERE id = ?").bind(i.gender, i.playerId)));
+  for (const i of items)
+    await logDecision(db, { seasonId: Number(c.req.param('id')), kind: 'gender', title: `Pohlaví: ${await playerLabel(db, i.playerId)} – ${i.gender === 'F' ? 'dívka' : 'chlapec'}`, playerId: i.playerId });
   return c.json({ saved: items.length });
 });
 

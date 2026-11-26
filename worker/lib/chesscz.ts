@@ -72,5 +72,23 @@ export async function getClubMembers(db: D1Database, code: string): Promise<Ches
   if (res.status === 404) return [];
   if (!res.ok) return null;
   const j = (await res.json()) as ChessczClubMember[] | null;
-  return Array.isArray(j) ? j.filter((m) => m && m.czeId).map((m) => ({ ...m, fullName: m.fullName.trim() })) : [];
+  const list = Array.isArray(j) ? j.filter((m) => m && m.czeId).map((m) => ({ ...m, fullName: m.fullName.trim() })) : [];
+  await db
+    .prepare('INSERT OR REPLACE INTO chesscz_cache (cache_key, payload, fetched_at) VALUES (?, ?, ?)')
+    .bind(`/clubs/${code}/members`, JSON.stringify(list.map((m) => ({ czeId: m.czeId, fullName: m.fullName, birthYear: m.birthYear }))), Date.now())
+    .run();
+  return list;
+}
+
+/** Member detail from the cache only (no request); null = not loaded or not found. */
+export async function cachedMember(db: D1Database, lokId: number): Promise<ChessczMember | null> {
+  const r = await db.prepare('SELECT payload FROM chesscz_cache WHERE cache_key = ?').bind(`/members/${lokId}/cze`).first<{ payload: string }>();
+  const d = r ? (JSON.parse(r.payload) as ChessczMember | null) : null;
+  return d ? { ...d, gender: normGender(d.gender) } : null;
+}
+
+/** Club member list (LOK, name, birth year) from the cache only; null = not loaded. */
+export async function cachedClub(db: D1Database, code: string): Promise<{ czeId: number; fullName: string; birthYear: number | null }[] | null> {
+  const r = await db.prepare('SELECT payload FROM chesscz_cache WHERE cache_key = ?').bind(`/clubs/${code}/members`).first<{ payload: string }>();
+  return r ? JSON.parse(r.payload) : null;
 }

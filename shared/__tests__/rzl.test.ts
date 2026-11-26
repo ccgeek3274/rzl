@@ -173,7 +173,7 @@ describe.skipIf(!HAS_FX)('RŽL 2026/27 rounds 1–3 vs official sheet', () => {
   });
 });
 
-import { matchesRzlId, rzlId, similarNames } from '../text';
+import { matchesRzlId, rzlId, sameRegisteredName, similarNames } from '../text';
 
 describe('player identity', () => {
   it('detects similar names', () => {
@@ -183,6 +183,13 @@ describe('player identity', () => {
     expect(similarNames('novakova eliska', 'novakova eliska')).toBe('same');
     expect(similarNames('novak jan', 'novy petr')).toBeNull();
     expect(similarNames('dvorak jindrich', 'dvorak jindra')).toBeNull();
+  });
+  it('compares a name with the one registered on chess.cz', () => {
+    expect(sameRegisteredName('Novák Petr', 'Novák, Petr')).toBe(true);
+    expect(sameRegisteredName('Novák Petr Jan', 'Novák, Petr')).toBe(true);
+    expect(sameRegisteredName('Nováková-Dvořáková Eva', 'Novákovádvořáková Eva')).toBe(true);
+    expect(sameRegisteredName('Dvořák Petr', 'Novák, Petr')).toBe(false);
+    expect(sameRegisteredName('Malá Jana', 'Novák, Petr')).toBe(false);
   });
   it('formats and matches RŽL ID', () => {
     expect(rzlId(79)).toBe('R0079');

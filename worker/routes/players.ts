@@ -1,21 +1,25 @@
 import { Hono } from 'hono';
 import { parsePlayerInfo } from '../../shared/chessresults';
 import { categoryOf } from '../../shared/rzl';
-import type { PlayerDetailDto, SeasonPlayerDto, ChessczInfo } from '../../shared/types';
-import { guessGender, nameKey } from '../../shared/text';
+import type { PlayerDetailDto, PlayerGameDto, SeasonPlayerDto, ChessczInfo } from '../../shared/types';
+import type { CrGame } from '../../shared/chessresults';
+import { fold, guessGender, nameKey } from '../../shared/text';
 import { getMember } from '../lib/chesscz';
 import { fetchPage } from '../lib/chessresults';
 import { fail } from '../lib/http';
 import { chessczOf, eligibility, loadSeason, playerName, playersElo, seasonIssues, type LoadedSeason, type PlayerRow } from '../lib/season';
 import { mergeSettings } from '../../shared/rzl';
-import { moveInstances, type InstanceRow } from '../lib/instances';
+import { lokVerdict, moveInstances, reopenOnLokConflict, type InstanceRow } from '../lib/instances';
+import { logDecision, playerLabel, seasonOfPlayer } from '../lib/log';
+const rzlLabel = (id: number) => `R${String(id).padStart(4, '0')}`;
 import type { AppEnv } from '../types';
 
 export const players = new Hono<AppEnv>();
 
-export function playerDto(p: PlayerRow, extra: { startYear: number; hd8?: boolean; tournaments: number; rzlElo: number | null; postup: string | null; issues: number }): SeasonPlayerDto {
+export function playerDto(p: PlayerRow, extra: { startYear: number; hd8?: boolean; tournaments: number; rzlElo: number | null; postup: string | null; issues: number; otherNames?: string[] }): SeasonPlayerDto {
   return {
     id: p.id,
+    otherNames: extra.otherNames ?? [],
     lokId: p.lok_id,
     surname: p.surname,
     firstName: p.first_name,
@@ -58,6 +62,7 @@ export function seasonPlayersView(L: LoadedSeason): SeasonPlayerDto[] {
         rzlElo: steps?.length ? steps[steps.length - 1].after : null,
         postup: L.postup.get(p.id)?.postup ?? null,
         issues: issues.get(p.id) ?? 0,
+        otherNames: L.otherNames.get(p.id) ?? [],
       });
     })
     .sort((a, b) => a.name.localeCompare(b.name, 'cs'));
@@ -76,12 +81,17 @@ players.get('/search', async (c) => {
   const q = nameKey(c.req.query('q') ?? '', '');
   const lok = Number(c.req.query('q'));
   const rows = await c.env.DB.prepare(
-    `SELECT p.id, p.surname, p.first_name, p.lok_id, p.birth_year, c.name AS club FROM players p LEFT JOIN clubs c ON c.id = p.club_id
-     WHERE p.name_key LIKE ? OR p.lok_id = ? ORDER BY p.surname, p.first_name LIMIT 30`
+    `SELECT p.id, p.surname, p.first_name, p.lok_id, p.birth_year, c.name AS club,
+       (SELECT group_concat(DISTINCT replace(i.cr_name, ',', '')) FROM player_instances i WHERE i.player_id = p.id AND i.name_key != p.name_key) AS other
+     FROM players p LEFT JOIN clubs c ON c.id = p.club_id
+     WHERE p.name_key LIKE ?1 OR p.lok_id = ?2 OR p.id IN (SELECT player_id FROM player_instances WHERE name_key LIKE ?1)
+     ORDER BY p.surname, p.first_name LIMIT 30`
   )
     .bind(`%${q}%`, lok || -1)
-    .all<{ id: number; surname: string; first_name: string; lok_id: number | null; birth_year: number | null; club: string | null }>();
-  return c.json(rows.results.map((r) => ({ id: r.id, name: `${r.surname} ${r.first_name}`, lokId: r.lok_id, birthYear: r.birth_year, club: r.club })));
+    .all<{ id: number; surname: string; first_name: string; lok_id: number | null; birth_year: number | null; club: string | null; other: string | null }>();
+  return c.json(
+    rows.results.map((r) => ({ id: r.id, name: `${r.surname} ${r.first_name}`, otherNames: r.other ? r.other.split(',').map((x) => x.replace(/\s+/g, ' ').trim()) : [], lokId: r.lok_id, birthYear: r.birth_year, club: r.club }))
+  );
 });
 
 players.get('/:id', async (c) => {
@@ -92,13 +102,13 @@ players.get('/:id', async (c) => {
   const settings = mergeSettings(JSON.parse(season?.settings ?? '{}'));
   const elo = (await playersElo(c.env.DB, settings, [id])).get(id) ?? [];
   const rows = await c.env.DB.prepare(
-    `SELECT e.id, e.tournament_id, e.cr_name, e.cr_lok_id, e.club_raw, e.rtg, e.points, e.rank, e.points_override, e.rank_override, e.match, e.excluded, e.instance_id,
+    `SELECT e.id, e.tournament_id, e.cr_name, e.cr_lok_id, e.club_raw, e.rtg, e.points, e.rank, e.points_override, e.rank_override, e.match, e.excluded, e.instance_id, e.games,
             t.link_name, t.grp, r.date, s.id AS season_id, s.name AS season_name
      FROM entries e JOIN tournaments t ON t.id = e.tournament_id JOIN rounds r ON r.id = t.round_id JOIN seasons s ON s.id = t.season_id
      WHERE e.player_id = ? ORDER BY r.date, r.ordinal`
   )
     .bind(id)
-    .all<{ id: number; tournament_id: number; cr_name: string; cr_lok_id: number | null; club_raw: string; rtg: number | null; points: number; rank: number; points_override: number | null; rank_override: number | null; match: string | null; excluded: number; instance_id: number | null; link_name: string; grp: string; date: string | null; season_id: number; season_name: string }>();
+    .all<{ id: number; tournament_id: number; cr_name: string; cr_lok_id: number | null; club_raw: string; rtg: number | null; points: number; rank: number; points_override: number | null; rank_override: number | null; match: string | null; excluded: number; instance_id: number | null; games: string; link_name: string; grp: string; date: string | null; season_id: number; season_name: string }>();
   const insts = await c.env.DB.prepare(
     `SELECT i.*, (SELECT COUNT(*) FROM entries e WHERE e.instance_id = i.id) AS n,
        (SELECT MIN(r.date) FROM entries e JOIN tournaments t ON t.id = e.tournament_id JOIN rounds r ON r.id = t.round_id WHERE e.instance_id = i.id) AS first_date,
@@ -107,6 +117,35 @@ players.get('/:id', async (c) => {
   )
     .bind(id)
     .all<InstanceRow & { n: number; first_date: string | null; last_date: string | null }>();
+  // RŽL points of each row (from the season's standings) and the games with opponent names.
+  const rzl = new Map<number, { points: number; placement: number; counted: boolean }>();
+  for (const sid of new Set(rows.results.map((r) => r.season_id))) {
+    const L = await loadSeason(c.env.DB, sid);
+    const st = L.standings.find((x) => x.playerId === id);
+    for (const x of Object.values(st?.results ?? {})) rzl.set(x.entryId, { points: x.points, placement: x.placement, counted: x.counted });
+  }
+  const tids = [...new Set(rows.results.map((r) => r.tournament_id))];
+  const opps = tids.length
+    ? (
+        await c.env.DB.prepare(`SELECT tournament_id, snr, cr_name, rtg, player_id FROM entries WHERE tournament_id IN (${tids.map(() => '?').join(',')})`)
+          .bind(...tids)
+          .all<{ tournament_id: number; snr: number; cr_name: string; rtg: number | null; player_id: number | null }>()
+      ).results
+    : [];
+  const oppOf = new Map(opps.map((o) => [`${o.tournament_id}:${o.snr}`, o]));
+  const gamesOf = (tid: number, raw: string): PlayerGameDto[] =>
+    (JSON.parse(raw) as CrGame[]).map((g, n) => {
+      const o = 'opp' in g ? oppOf.get(`${tid}:${g.opp}`) : undefined;
+      return {
+        round: n + 1,
+        kind: g.kind,
+        color: 'color' in g ? g.color : null,
+        score: 'score' in g ? g.score : null,
+        oppName: o ? o.cr_name.replace(',', '') : null,
+        oppRtg: o?.rtg ?? null,
+        oppPlayerId: o?.player_id ?? null,
+      };
+    });
   const sp = seasonId ? await c.env.DB.prepare('SELECT postup FROM season_players WHERE season_id = ? AND player_id = ?').bind(seasonId, id).first<{ postup: string | null }>() : null;
   const dto: PlayerDetailDto = {
     player: playerDto(p, { startYear: season?.start_year ?? new Date().getFullYear(), hd8: settings.hd8, tournaments: rows.results.length, rzlElo: elo.length ? elo[elo.length - 1].after : null, postup: sp?.postup ?? null, issues: 0 }),
@@ -145,6 +184,8 @@ players.get('/:id', async (c) => {
         eloBefore: st?.before ?? null,
         eloDelta: st?.delta ?? null,
         eloAfter: st?.after ?? null,
+        rzl: rzl.get(r.id) ?? null,
+        games: gamesOf(r.tournament_id, r.games),
       };
     }),
   };
@@ -199,6 +240,16 @@ players.patch('/:id', async (c) => {
       id
     )
     .run();
+  const ch: string[] = [];
+  if (surname !== p.surname || firstName !== p.first_name) ch.push(`jméno ${p.surname} ${p.first_name} → ${surname} ${firstName}`);
+  if (b.lokId !== undefined && (b.lokId || null) !== p.lok_id) ch.push(`LOK ${p.lok_id ?? '–'} → ${b.lokId || '–'}`);
+  if (b.gender !== undefined && (b.gender !== p.gender || p.gender_source !== 'manual')) ch.push(`pohlaví ${b.gender === 'F' ? 'dívka' : b.gender === 'M' ? 'chlapec' : '–'}`);
+  if (b.birthYear !== undefined && b.birthYear !== p.birth_year) ch.push(`rok narození ${p.birth_year ?? '–'} → ${b.birthYear ?? '–'}`);
+  if (b.clubId !== undefined && b.clubId !== p.club_id) ch.push('oddíl');
+  if (b.regionOverride !== undefined && b.regionOverride !== p.region_override)
+    ch.push(b.regionOverride === 'in' ? 'region: patří' : b.regionOverride === 'out' ? 'region: nepatří' : 'region podle oddílu');
+  if (b.note !== undefined && b.note !== p.note) ch.push('poznámka');
+  if (ch.length) await logDecision(c.env.DB, { seasonId: await seasonOfPlayer(c.env.DB, id), kind: 'player', title: `Hráč ${rzlLabel(id)} ${surname} ${firstName}: ${ch.join(', ')}`, playerId: id });
   return c.json({ ok: true });
 });
 
@@ -210,6 +261,12 @@ players.post('/:id/merge', async (c) => {
   const target = await getPlayer(c.env.DB, id);
   const src = await getPlayer(c.env.DB, sourceId);
   const db = c.env.DB;
+  await logDecision(db, {
+    seasonId: await seasonOfPlayer(db, sourceId),
+    kind: 'merge',
+    title: `Sloučeno: ${await playerLabel(db, sourceId)} → ${await playerLabel(db, id)}`,
+    playerId: id,
+  });
   await moveInstances(db, sourceId, id);
   const stmts = [
     db.prepare('INSERT OR IGNORE INTO season_players (season_id, player_id, postup, note) SELECT season_id, ?, postup, note FROM season_players WHERE player_id = ?').bind(id, sourceId),
@@ -250,12 +307,12 @@ export async function enrichFromChesscz(db: D1Database, p: PlayerRow, force = fa
   const d = m.data;
   await db
     .prepare(
-      `UPDATE players SET chesscz = ?, chesscz_at = ?,
-         birth_year = CASE WHEN birth_source = 'manual' THEN birth_year ELSE COALESCE(?, birth_year) END,
-         birth_source = CASE WHEN birth_source = 'manual' THEN birth_source WHEN ? IS NOT NULL THEN 'chesscz' ELSE birth_source END,
-         gender = CASE WHEN gender_source = 'manual' THEN gender ELSE ? END,
-         gender_source = CASE WHEN gender_source = 'manual' THEN gender_source ELSE 'chesscz' END
-       WHERE id = ?`
+      `UPDATE players SET chesscz = ?1, chesscz_at = ?2,
+         birth_year = CASE WHEN birth_source = 'manual' OR ?7 THEN birth_year ELSE COALESCE(?3, birth_year) END,
+         birth_source = CASE WHEN birth_source = 'manual' OR ?7 THEN birth_source WHEN ?4 IS NOT NULL THEN 'chesscz' ELSE birth_source END,
+         gender = CASE WHEN gender_source = 'manual' OR ?7 THEN gender ELSE ?5 END,
+         gender_source = CASE WHEN gender_source = 'manual' OR ?7 THEN gender_source ELSE 'chesscz' END
+       WHERE id = ?6`
     )
     .bind(
       JSON.stringify({
@@ -276,9 +333,24 @@ export async function enrichFromChesscz(db: D1Database, p: PlayerRow, force = fa
       d.birthYear,
       d.birthYear,
       d.gender,
-      p.id
+      p.id,
+      // A LOK whose chess.cz record has a wrong name (operator's verdict): only Elo and registration are used.
+      (await lokVerdict(db, p.lok_id)) === 'cz-error' ? 1 : 0
     )
     .run();
+  // The tournament swapped surname and first name (common with Vietnamese names): take the order from chess.cz.
+  const compact = (x: string) => fold(x).replace(/\s+/g, ' ').trim();
+  if (p.first_name && compact(d.fullName) === compact(`${p.first_name} ${p.surname}`) && compact(d.fullName) !== compact(`${p.surname} ${p.first_name}`)) {
+    await db.prepare('UPDATE players SET surname = ?1, first_name = ?2, name_key = ?3 WHERE id = ?4').bind(p.first_name, p.surname, nameKey(p.first_name, p.surname), p.id).run();
+    await logDecision(db, {
+      seasonId: await seasonOfPlayer(db, p.id),
+      kind: 'player',
+      title: `Jméno podle chess.cz: ${p.surname} ${p.first_name} → ${p.first_name} ${p.surname} (prohozené příjmení a jméno v turnaji)`,
+      playerId: p.id,
+    });
+    return 'ok';
+  }
+  await reopenOnLokConflict(db, p.id, p.lok_id, d.fullName, `${p.surname} ${p.first_name}`);
   return 'ok';
 }
 
@@ -302,7 +374,8 @@ export async function enrichInstanceFromCr(db: D1Database, instanceId: number): 
     await db
       .prepare(
         `UPDATE players SET birth_year = ?, birth_source = 'cr'
-         WHERE id = (SELECT player_id FROM player_instances WHERE id = ?) AND lok_id IS NULL AND birth_year IS NULL AND (birth_source IS NULL OR birth_source NOT IN ('manual', 'chesscz'))`
+         WHERE id = (SELECT player_id FROM player_instances WHERE id = ?)
+           AND (lok_id IS NULL OR lok_id IN (SELECT lok_id FROM lok_verdicts WHERE verdict = 'cz-error')) AND birth_year IS NULL AND (birth_source IS NULL OR birth_source NOT IN ('manual', 'chesscz'))`
       )
       .bind(info.birthYear, instanceId)
       .run();

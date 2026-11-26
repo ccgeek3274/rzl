@@ -3,7 +3,7 @@ body { margin: 0; background: #f4f6f8; }
 .app-header { display: flex; align-items: center; gap: 16px; padding: 0 20px; background: #10324a; color: #fff; height: 56px; }
 .app-header a { color: #fff; }
 .app-brand { font-weight: 700; font-size: 17px; letter-spacing: .2px; display: flex; align-items: center; gap: 8px; }
-.app-content { padding: 16px 20px 40px; max-width: 1700px; margin: 0 auto; }
+.app-content { padding: 16px 20px 40px; margin: 0 auto; }
 .muted { color: #8a94a0; }
 .num { font-variant-numeric: tabular-nums; }
 .res-counted { font-weight: 600; }
@@ -47,3 +47,11 @@ html.is-busy, html.is-busy * { cursor: progress !important; }
 .cmp-diff { background: #fff1e0; color: #ad4e00; border-radius: 3px; padding: 1px 4px; font-weight: 600; }
 .identity-table .ant-table-tbody > tr > td { border-bottom: 1px solid #000; }
 .identity-table .ant-table-thead > tr > th { border-bottom: 1px solid #000; }
+/* Horizontal scrolling of wide tables: a clearly visible scrollbar (also the sticky one at the bottom of the window). */
+.ant-table-content, .ant-table-body { scrollbar-width: auto; scrollbar-color: #8a94a0 #e3e7eb; }
+.ant-table-content::-webkit-scrollbar, .ant-table-body::-webkit-scrollbar { height: 14px; }
+.ant-table-content::-webkit-scrollbar-track, .ant-table-body::-webkit-scrollbar-track { background: #e3e7eb; }
+.ant-table-content::-webkit-scrollbar-thumb, .ant-table-body::-webkit-scrollbar-thumb { background: #8a94a0; border-radius: 7px; border: 2px solid #e3e7eb; }
+.ant-table-sticky-scroll { height: 14px !important; background: #e3e7eb !important; opacity: 1 !important; border-top: 1px solid #c9d0d7; }
+.ant-table-sticky-scroll-bar { height: 10px !important; margin-top: 2px; background: #8a94a0 !important; border-radius: 5px !important; }
+.ant-table-sticky-scroll-bar:hover, .ant-table-sticky-scroll-bar-active { background: #10324a !important; }

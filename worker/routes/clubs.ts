@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { ClubDto } from '../../shared/types';
 import { fail } from '../lib/http';
+import { logDecision } from '../lib/log';
 import type { AppEnv } from '../types';
 
 export const clubs = new Hono<AppEnv>();
@@ -36,6 +37,11 @@ clubs.patch('/:id', async (c) => {
   await c.env.DB.prepare('UPDATE clubs SET name = ?, region = ?, note = ? WHERE id = ?')
     .bind(b.name?.trim() || cur.name, b.region !== undefined ? b.region : cur.region, b.note !== undefined ? b.note : cur.note, Number(c.req.param('id')))
     .run();
+  const ch: string[] = [];
+  if (b.region !== undefined && b.region !== cur.region) ch.push(b.region === 'in' ? 'patří do regionu' : b.region === 'out' ? 'mimo region' : 'region nerozhodnut');
+  if (b.name?.trim() && b.name.trim() !== cur.name) ch.push(`přejmenován na ${b.name.trim()}`);
+  if (b.note !== undefined && b.note !== cur.note) ch.push('poznámka');
+  if (ch.length) await logDecision(c.env.DB, { kind: 'club', title: `Oddíl ${cur.name}: ${ch.join(', ')}` });
   return c.json({ ok: true });
 });
 
@@ -49,5 +55,7 @@ clubs.post('/:id/merge', async (c) => {
     c.env.DB.prepare('UPDATE players SET club_id = ? WHERE club_id = ?').bind(id, sourceId),
     c.env.DB.prepare('DELETE FROM clubs WHERE id = ?').bind(sourceId),
   ]);
+  const names = await c.env.DB.prepare('SELECT name FROM clubs WHERE id = ?').bind(id).first<{ name: string }>();
+  await logDecision(c.env.DB, { kind: 'club', title: `Oddíly sloučeny do ${names?.name ?? id}` });
   return c.json({ ok: true });
 });

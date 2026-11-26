@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { App, Button, Card, Empty, Segmented, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd';
+import { App, Button, Card, Empty, Input, Popconfirm, Segmented, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd';
 import { CheckOutlined, CloseCircleFilled, ExclamationCircleFilled, InfoCircleFilled, UndoOutlined } from '@ant-design/icons';
-import type { Issue } from '../../../../shared/types';
+import type { HistoryDto, Issue } from '../../../../shared/types';
 import { api } from '../../lib/api';
-import { rzlId } from '../../../../shared/text';
-import { useAction, useIssues, usePlayerDrawer } from '../../lib/hooks';
+import { fold, rzlId } from '../../../../shared/text';
+import { useAction, useHistory, useIssues, usePlayerDrawer } from '../../lib/hooks';
 import { useBatch } from '../../components/BatchRunner';
 import { useSeasonId } from './SeasonLayout';
 
@@ -29,6 +29,26 @@ const TYPE_LABEL: Record<string, string> = {
 
 export function IssuesTab() {
   const id = useSeasonId();
+  const [view, setView] = useState<'open' | 'history'>('open');
+  const { data: history = [] } = useHistory(id);
+  return (
+    <>
+      <Segmented
+        style={{ marginBottom: 12 }}
+        value={view}
+        onChange={(v) => setView(v as 'open' | 'history')}
+        options={[
+          { value: 'open', label: 'K vyřešení' },
+          { value: 'history', label: `Historie rozhodnutí (${history.length})` },
+        ]}
+      />
+      {view === 'open' ? <OpenIssues /> : <History items={history} />}
+    </>
+  );
+}
+
+function OpenIssues() {
+  const id = useSeasonId();
   const { data = [], isLoading } = useIssues(id);
   const drawer = usePlayerDrawer();
   const { modal } = App.useApp();
@@ -36,10 +56,10 @@ export function IssuesTab() {
   const [showAcked, setShowAcked] = useState(false);
   const batch = useBatch();
 
-  const ack = useAction((v: { key: string; acked: boolean }) => api.post(`/seasons/${id}/issues/ack`, v));
+  const ack = useAction((v: { key: string; acked: boolean; title?: string }) => api.post(`/seasons/${id}/issues/ack`, v));
   const setRegion = useAction((v: { clubId: number; region: 'in' | 'out' }) => api.patch(`/clubs/${v.clubId}`, { region: v.region }), 'Uloženo');
   const setGender = useAction((v: { playerId: number; gender: 'M' | 'F' }) => api.patch(`/players/${v.playerId}`, { gender: v.gender }), 'Uloženo');
-  const exclude = useAction((v: { entryId: number }) => api.patch(`/entries/${v.entryId}`, { excluded: true, note: 'nenastoupil' }), 'Vyřazeno');
+  const exclude = useAction((v: { entryId: number }) => api.patch(`/entries/${v.entryId}`, { excluded: true, note: 'nenastoupil (jen kontumace a volna)' }), 'Řádek se nezapočítává');
   const merge = useAction((v: { target: number; source: number }) => api.post(`/players/${v.target}/merge`, { sourceId: v.source }), 'Sloučeno');
 
   const guesses = data.filter((i) => i.key.startsWith('gender-guess:'));
@@ -73,9 +93,21 @@ export function IssuesTab() {
         </>
       )}
       {i.key.startsWith('no-show:') && i.refs.entryId && (
-        <Button size="small" onClick={() => exclude.mutate({ entryId: i.refs.entryId! })}>
-          Vyřadit
-        </Button>
+        <Popconfirm
+          title="Nezapočítávat tento řádek?"
+          description={
+            <div style={{ maxWidth: 360 }}>
+              Hráč v tomto kole nebude mít výsledek (žádné body ani umístění) a hráči za ním se v pořadí kola posunou o místo výš –
+              stejně jako v oficiální tabulce. Řádek v turnaji zůstane (přeškrtnutý) a jde vrátit v detailu turnaje: Upravit →
+              Nezapočítávat.
+            </div>
+          }
+          okText="Nezapočítávat"
+          cancelText="Zpět"
+          onConfirm={() => exclude.mutate({ entryId: i.refs.entryId! })}
+        >
+          <Button size="small">Nezapočítávat…</Button>
+        </Popconfirm>
       )}
       {i.refs.playerId && (
         <Button size="small" type="link" onClick={() => drawer.open(i.refs.playerId!)}>
@@ -117,12 +149,12 @@ export function IssuesTab() {
         </Link>
       )}
       {i.severity === 'error' || i.type === 'gender' || i.key === 'inst-open' ? null : i.acked ? (
-        <Button size="small" icon={<UndoOutlined />} onClick={() => ack.mutate({ key: i.key, acked: false })}>
+        <Button size="small" icon={<UndoOutlined />} onClick={() => ack.mutate({ key: i.key, acked: false, title: i.title })}>
           Vrátit
         </Button>
       ) : (
         <Tooltip title="Prověřil(a) jsem, je to v pořádku – na datech se nic nemění, upozornění se jen skryje (vrátit jde přes „zobrazit i ty označené V pořádku“)">
-          <Button size="small" icon={<CheckOutlined />} onClick={() => ack.mutate({ key: i.key, acked: true })}>
+          <Button size="small" icon={<CheckOutlined />} onClick={() => ack.mutate({ key: i.key, acked: true, title: i.title })}>
             V pořádku
           </Button>
         </Tooltip>
@@ -253,5 +285,103 @@ function GenderGuesses({ seasonId, issues, onOpen }: { seasonId: number; issues:
         {col('M')}
       </div>
     </Card>
+  );
+}
+
+const KIND_LABEL: Record<string, string> = {
+  pairing: 'Párování',
+  lok: 'LOK',
+  gender: 'Pohlaví',
+  entry: 'Řádek',
+  ack: 'V pořádku',
+  club: 'Oddíl',
+  player: 'Hráč',
+  merge: 'Sloučení',
+};
+
+const fmtAt = (ms: number) =>
+  new Date(ms).toLocaleString('cs-CZ', { day: 'numeric', month: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+/** What the operator decided or corrected, newest first. */
+function History({ items }: { items: HistoryDto[] }) {
+  const id = useSeasonId();
+  const drawer = usePlayerDrawer();
+  const [kind, setKind] = useState('all');
+  const [q, setQ] = useState('');
+  const counts = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const i of items) c[i.kind] = (c[i.kind] ?? 0) + 1;
+    return c;
+  }, [items]);
+  const rows = items.filter(
+    (i) => (kind === 'all' || i.kind === kind) && (!q.trim() || fold(`${i.title} ${i.detail ?? ''}`).includes(fold(q.trim())))
+  );
+  return (
+    <>
+      <Typography.Paragraph type="secondary" style={{ maxWidth: 900 }}>
+        Všechna rozhodnutí a opravy: párování, LOK, pohlaví, nezapočítané řádky, „V pořádku“, úpravy hráčů a oddílů. Záznam se
+        nemaže – když rozhodnutí později změníte, přibude nový řádek.
+      </Typography.Paragraph>
+      <Space wrap style={{ marginBottom: 12 }}>
+        <Segmented
+          value={kind}
+          onChange={(v) => setKind(v as string)}
+          options={[
+            { value: 'all', label: `Vše (${items.length})` },
+            ...Object.keys(KIND_LABEL)
+              .filter((k) => counts[k])
+              .map((k) => ({ value: k, label: `${KIND_LABEL[k]} (${counts[k]})` })),
+          ]}
+        />
+        <Input.Search allowClear placeholder="Hledat (jméno, LOK, turnaj)…" style={{ width: 260 }} onChange={(e) => setQ(e.target.value)} />
+      </Space>
+      {!rows.length ? (
+        <Empty description="Zatím žádná rozhodnutí" />
+      ) : (
+        <Table<HistoryDto>
+          size="small"
+          rowKey="id"
+          dataSource={rows}
+          pagination={{ pageSize: 100, hideOnSinglePage: true }}
+          columns={[
+            { title: 'Kdy', width: 150, render: (_, i) => <span className="num muted">{fmtAt(i.at)}</span> },
+            { title: 'Typ', width: 100, render: (_, i) => <Tag>{KIND_LABEL[i.kind] ?? i.kind}</Tag> },
+            {
+              title: 'Rozhodnutí',
+              render: (_, i) => (
+                <>
+                  <div>{i.title}</div>
+                  {i.detail && (
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      {i.detail}
+                    </Typography.Text>
+                  )}
+                </>
+              ),
+            },
+            {
+              title: '',
+              width: 160,
+              render: (_, i) => (
+                <Space size={4}>
+                  {i.playerId && (
+                    <Button size="small" type="link" onClick={() => drawer.open(i.playerId!)}>
+                      Hráč
+                    </Button>
+                  )}
+                  {i.tournamentId && (
+                    <Link to={`/s/${id}/turnaje/${i.tournamentId}`}>
+                      <Button size="small" type="link">
+                        Turnaj
+                      </Button>
+                    </Link>
+                  )}
+                </Space>
+              ),
+            },
+          ]}
+        />
+      )}
+    </>
   );
 }

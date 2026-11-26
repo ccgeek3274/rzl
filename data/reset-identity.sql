@@ -5,6 +5,7 @@ DELETE FROM entries;
 DELETE FROM player_instances;
 DELETE FROM season_players;
 DELETE FROM issue_acks;
+DELETE FROM lok_verdicts;
 DELETE FROM players;
 DELETE FROM club_aliases;
 DELETE FROM clubs;

@@ -72,6 +72,18 @@ export function similarNames(a: string, b: string): 'same' | 'swap' | 'typo' | '
   return null;
 }
 
+/** Could the name registered on chess.cz ("Surname First") be the same person as `name`? Order, typo, extra name, hyphens allowed. */
+export function sameRegisteredName(a: string, b: string): boolean {
+  const k = (x: string) =>
+    fold(x)
+      .replace(/[^a-z ]/g, ' ')
+      .split(/\s+/)
+      .filter(Boolean)
+      .join(' ');
+  const [ka, kb] = [k(a), k(b)];
+  return similarNames(ka, kb) != null || ka.replace(/ /g, '') === kb.replace(/ /g, '');
+}
+
 /** Levenshtein distance, early exit once it exceeds `max` (returns max + 1). */
 function levenshtein(a: string, b: string, max: number): number {
   if (Math.abs(a.length - b.length) > max) return max + 1;

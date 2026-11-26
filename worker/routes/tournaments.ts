@@ -1,9 +1,11 @@
 import { Hono } from 'hono';
 import { fail, now } from '../lib/http';
+import { crLabel, logDecision, playerLabel } from '../lib/log';
 import { fetchTournament, importTournament } from '../lib/importer';
-import { assignInstance, dropIfOrphan, newPlayerFromInstance } from '../lib/instances';
+import { assignInstance, dropIfOrphan, newPlayerFromInstance, resolveRuledOut } from '../lib/instances';
 import { chessczOf, loadSeason, tournamentView, type PlayerRow } from '../lib/season';
-import { getClubMembers } from '../lib/chesscz';
+import { cachedClub, cachedMember, getClubMembers, getMember } from '../lib/chesscz';
+import { sameRegisteredName } from '../../shared/text';
 import type { ChessczInfo } from '../../shared/types';
 import { tournamentDto } from './seasons';
 import { enrichFromChesscz, enrichInstanceFromCr } from './players';
@@ -51,7 +53,11 @@ tournaments.patch('/tournaments/:id', async (c) => {
 /** Corrections of one result row. playerId => assign the row's instance (or with rowOnly just this row). */
 tournaments.patch('/entries/:id', async (c) => {
   const id = Number(c.req.param('id'));
-  const e = await c.env.DB.prepare('SELECT id, player_id, instance_id FROM entries WHERE id = ?').bind(id).first<{ id: number; player_id: number | null; instance_id: number | null }>();
+  const e = await c.env.DB.prepare(
+    'SELECT e.id, e.player_id, e.instance_id, e.cr_name, e.tournament_id, t.season_id, t.link_name FROM entries e JOIN tournaments t ON t.id = e.tournament_id WHERE e.id = ?'
+  )
+    .bind(id)
+    .first<{ id: number; player_id: number | null; instance_id: number | null; cr_name: string; tournament_id: number; season_id: number; link_name: string }>();
   if (!e) fail(404, 'Výsledek nenalezen');
   const b = await c.req.json<Partial<{ playerId: number; rowOnly: boolean; pointsOverride: number | null; rankOverride: number | null; excluded: boolean; note: string | null }>>();
   const db = c.env.DB;
@@ -78,7 +84,23 @@ tournaments.patch('/entries/:id', async (c) => {
         id
       )
       .run();
+    const ch: string[] = [];
+    if (b.excluded !== undefined && !!b.excluded !== !!cur!.excluded) ch.push(b.excluded ? 'nezapočítává se' : 'znovu se započítává');
+    if (b.pointsOverride !== undefined && b.pointsOverride !== cur!.points_override) ch.push(b.pointsOverride == null ? 'zrušena oprava bodů' : `body opraveny na ${b.pointsOverride}`);
+    if (b.rankOverride !== undefined && b.rankOverride !== cur!.rank_override) ch.push(b.rankOverride == null ? 'zrušena oprava pořadí' : `pořadí opraveno na ${b.rankOverride}.`);
+    if (b.note !== undefined && b.note !== cur!.note && b.note) ch.push(`poznámka: ${b.note}`);
+    if (ch.length)
+      await logDecision(db, { seasonId: e.season_id, kind: 'entry', title: `${crLabel(e.cr_name)} (${e.link_name}): ${ch.join(', ')}`, playerId: e.player_id, tournamentId: e.tournament_id });
   }
+  if (b.playerId !== undefined)
+    await logDecision(db, {
+      seasonId: e.season_id,
+      kind: 'pairing',
+      title: `${b.rowOnly || !e.instance_id ? 'Řádek' : 'Párování'}: ${crLabel(e.cr_name)} (${e.link_name}) → ${await playerLabel(db, b.playerId)}`,
+      playerId: b.playerId,
+      tournamentId: e.tournament_id,
+      instanceId: e.instance_id,
+    });
   return c.json({ ok: true });
 });
 
@@ -87,7 +109,17 @@ tournaments.post('/entries/:id/new-player', async (c) => {
   const e = await c.env.DB.prepare('SELECT instance_id FROM entries WHERE id = ?').bind(Number(c.req.param('id'))).first<{ instance_id: number | null }>();
   if (!e) fail(404, 'Výsledek nenalezen');
   if (!e.instance_id) fail(400, 'Řádek nemá instanci – načtěte turnaj znovu');
-  return c.json({ playerId: await newPlayerFromInstance(c.env.DB, e.instance_id) });
+  const i = await c.env.DB.prepare('SELECT cr_name FROM player_instances WHERE id = ?').bind(e.instance_id).first<{ cr_name: string }>();
+  const playerId = await newPlayerFromInstance(c.env.DB, e.instance_id);
+  const t = await c.env.DB.prepare('SELECT t.season_id FROM entries e JOIN tournaments t ON t.id = e.tournament_id WHERE e.id = ?').bind(Number(c.req.param('id'))).first<{ season_id: number }>();
+  await logDecision(c.env.DB, {
+    seasonId: t?.season_id,
+    kind: 'pairing',
+    title: `Párování: ${crLabel(i?.cr_name ?? '')} → nový hráč ${await playerLabel(c.env.DB, playerId)}`,
+    playerId,
+    instanceId: e.instance_id,
+  });
+  return c.json({ playerId });
 });
 
 /**
@@ -98,6 +130,7 @@ tournaments.post('/seasons/:id/enrich', async (c) => {
   const seasonId = Number(c.req.param('id'));
   const { limit = 8 } = await c.req.json<{ limit?: number }>().catch(() => ({ limit: 8 }));
   const db = c.env.DB;
+  await resolveRuledOut(db, seasonId);
   const inSeason = `p.id IN (SELECT e.player_id FROM entries e JOIN tournaments t ON t.id = e.tournament_id WHERE t.season_id = ?1)`;
   // Registered players not yet read from chess.cz.
   const czSql = `SELECT p.*, NULL AS club_name, NULL AS club_region FROM players p WHERE ${inSeason} AND p.lok_id IS NOT NULL AND p.chesscz_at IS NULL`;
@@ -135,11 +168,50 @@ tournaments.post('/seasons/:id/enrich', async (c) => {
       }
     }
   }
+  // Birth years from the cards may rule out candidates (siblings).
+  if (processed) await resolveRuledOut(db, seasonId);
+  // Open instances with a LOK: its chess.cz record, and for a name conflict the club's member list (evidence for the verdict).
+  if (!errors.length && processed < limit) {
+    for (const t of (await openLokTasks(db, seasonId)).slice(0, limit - processed)) {
+      if (Date.now() - started > 20_000) break;
+      const ok = t.kind === 'member' ? (await getMember(db, t.lok)).status !== 'unavailable' : (await getClubMembers(db, t.code)) !== null;
+      if (!ok) {
+        errors.push('chess.cz není dostupné');
+        break;
+      }
+      processed++;
+    }
+  }
   const remaining =
     ((await db.prepare(`SELECT COUNT(*) AS n FROM (${czSql})`).bind(seasonId).first<{ n: number }>())?.n ?? 0) +
-    ((await db.prepare(`SELECT COUNT(*) AS n FROM (${cardSql})`).bind(seasonId).first<{ n: number }>())?.n ?? 0);
+    ((await db.prepare(`SELECT COUNT(*) AS n FROM (${cardSql})`).bind(seasonId).first<{ n: number }>())?.n ?? 0) +
+    (errors.length ? 0 : (await openLokTasks(db, seasonId)).length);
   return c.json({ processed, remaining, errors });
 });
+
+/** chess.cz requests still needed for the open instances with a LOK (no verdict yet) of a season. */
+async function openLokTasks(db: D1Database, seasonId: number): Promise<({ kind: 'member'; lok: number } | { kind: 'club'; code: string })[]> {
+  const rows = await db
+    .prepare(
+      `SELECT DISTINCT i.lok_id, i.cr_name FROM player_instances i
+       WHERE i.status = 'open' AND i.lok_id IS NOT NULL AND i.lok_id NOT IN (SELECT lok_id FROM lok_verdicts)
+         AND i.id IN (SELECT e.instance_id FROM entries e JOIN tournaments t ON t.id = e.tournament_id WHERE t.season_id = ?)`
+    )
+    .bind(seasonId)
+    .all<{ lok_id: number; cr_name: string }>();
+  const out: ({ kind: 'member'; lok: number } | { kind: 'club'; code: string })[] = [];
+  for (const r of rows.results) {
+    const cached = await db.prepare('SELECT payload FROM chesscz_cache WHERE cache_key = ?').bind(`/members/${r.lok_id}/cze`).first<{ payload: string }>();
+    if (!cached) {
+      out.push({ kind: 'member', lok: r.lok_id });
+      continue;
+    }
+    const m = await cachedMember(db, r.lok_id);
+    if (m?.clubId && !sameRegisteredName(m.fullName, r.cr_name) && !(await cachedClub(db, m.clubId)) && !out.some((t) => t.kind === 'club' && t.code === m.clubId))
+      out.push({ kind: 'club', code: m.clubId });
+  }
+  return out;
+}
 
 /**
  * "Aktualizovat Ela": fresh Elo (ČR + FIDE) for all registered players of the season.

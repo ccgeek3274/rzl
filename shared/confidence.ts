@@ -3,6 +3,7 @@ import { fold, similarNames } from './text';
 
 export type ConfidenceInput = {
   how: string | null; // InstanceHow; null for a candidate of an open instance
+  sameRound?: string | null; // the candidate plays in the same round ("3B"): a different person
   cr: { name: string; lokId: number | null; birthYear: number | null; clubId: number | null };
   player: { name: string; lokId: number | null; birthYear: number | null; clubId: number | null; czName: string | null };
 };
@@ -26,6 +27,7 @@ export function pairingConfidence(i: ConfidenceInput): Confidence {
   const f: Confidence['factors'] = [];
   const add = (text: string, delta: number) => f.push({ text, delta });
   const { cr, player: p } = i;
+  if (i.sameRound) return { score: 0, level: 'low', factors: [{ text: `hraje ve stejném kole (${i.sameRound}) – nemůže to být tentýž hráč`, delta: -100 }] };
 
   if (i.how === 'new') {
     if (cr.lokId) add(`nový hráč s LOK ${cr.lokId}, nikdo podobný v evidenci aplikace`, 0);
@@ -46,7 +48,7 @@ export function pairingConfidence(i: ConfidenceInput): Confidence {
   // Name registered on chess.cz under the LOK (a wrong LOK in the tournament shows here).
   if (cr.lokId && p.lokId === cr.lokId && p.czName) {
     const s = similarNames(key(cr.name), key(p.czName));
-    if (!s) add(`na chess.cz je LOK ${cr.lokId} „${p.czName}“`, -25);
+    if (!s) add(`na chess.cz je LOK ${cr.lokId} „${p.czName}“`, -45);
   }
   // Birth year (tournament card vs. app); a new player was created from this very record.
   if (i.how !== 'new' && cr.birthYear && p.birthYear) {

@@ -4,7 +4,7 @@ import { parseLinked, parseTitle, parseTitleFacts, parseTournament, placeFromTit
 import { clubKey, clubShortName } from '../../shared/clubs';
 import { fetchDetails, fetchPage } from './chessresults';
 import { fail, now } from './http';
-import { dropIfOrphan, instanceForRow, loadIndex } from './instances';
+import { dropIfOrphan, instanceForRow, loadIndex, resolveRuledOut } from './instances';
 
 export type SeasonRow = { id: number; name: string; start_year: number; seed_tnr: number; settings: string };
 
@@ -135,6 +135,7 @@ export async function importTournament(db: D1Database, t: TournamentRow, start: 
   for (const e of existing.results) if (!seen.has(e.snr)) await db.prepare('DELETE FROM entries WHERE id = ?').bind(e.id).run();
   // Players created by an earlier import of this tournament whose rows went elsewhere.
   for (const e of existing.results) await dropIfOrphan(db, e.player_id);
+  await resolveRuledOut(db, t.season_id);
   return { players: parsed.players.length, created };
 }
 
@@ -155,7 +156,7 @@ export async function clubFor(db: D1Database, raw: string): Promise<number | nul
 }
 
 /** Club follows the most recent tournament unless set manually. */
-async function updatePlayerClub(db: D1Database, playerId: number, raw: string, date: string): Promise<void> {
+export async function updatePlayerClub(db: D1Database, playerId: number, raw: string, date: string): Promise<void> {
   const clubId = await clubFor(db, raw);
   if (!clubId) return;
   await db

@@ -1,3 +1,4 @@
+import { OtherNames } from '../../components/OtherNames';
 import { useMemo, useState } from 'react';
 import { Badge, Button, Input, Segmented, Space, Table, Tag, Tooltip } from 'antd';
 import { LineChartOutlined, TeamOutlined } from '@ant-design/icons';
@@ -25,7 +26,7 @@ export function PlayersTab() {
   const rows = useMemo(
     () =>
       data.filter((p) => {
-        if (q.trim() && !fold(p.name).includes(fold(q)) && !String(p.lokId ?? '').includes(q.trim()) && !matchesRzlId(q, p.id)) return false;
+        if (q.trim() && ![p.name, ...p.otherNames].some((n) => fold(n).includes(fold(q))) && !String(p.lokId ?? '').includes(q.trim()) && !matchesRzlId(q, p.id)) return false;
         switch (filter) {
           case 'issues':
             return p.issues > 0;
@@ -45,6 +46,7 @@ export function PlayersTab() {
       }),
     [data, filter, q]
   );
+  const clubOptions = useMemo(() => [...new Set(data.map((p) => p.club ?? ''))].sort((a, b) => a.localeCompare(b, 'cs')), [data]);
   const n = (f: Filter) => data.filter((p) => (f === 'issues' ? p.issues > 0 : f === 'in' ? p.eligibility === 'in' : f === 'out' ? p.eligibility === 'out' : f === 'undecided' ? p.eligibility === null : f === 'nobirth' ? !p.birthYear : f === 'unreg' ? !p.lokId : true)).length;
 
   return (
@@ -87,7 +89,10 @@ export function PlayersTab() {
             title: 'Jméno',
             sorter: (a, b) => a.name.localeCompare(b.name, 'cs'),
             render: (_, p) => (
-              <PlayerName name={p.name} gender={p.gender} genderSource={p.genderSource} extra={p.issues > 0 && <Badge count={p.issues} size="small" color="#d48806" />} />
+              <>
+                <PlayerName name={p.name} gender={p.gender} genderSource={p.genderSource} extra={p.issues > 0 && <Badge count={p.issues} size="small" color="#d48806" />} />
+                <OtherNames names={p.otherNames} />
+              </>
             ),
           },
           { title: 'RŽL ID', key: 'rid', width: 76, className: 'muted num', sorter: (a, b) => a.id - b.id, render: (_, p) => rzlId(p.id) },
@@ -103,20 +108,55 @@ export function PlayersTab() {
                 <span style={{ color: '#cf1322' }}>?</span>
               ),
           },
-          { title: 'Kat.', width: 80, render: (_, p) => CATEGORIES.find((c) => c.id === p.category)?.label ?? '?' },
+          {
+            title: 'Kat.',
+            key: 'cat',
+            width: 90,
+            filters: [...CATEGORIES.filter((c) => data.some((p) => p.category === c.id)).map((c) => ({ text: c.label, value: c.id })), { text: '?', value: '' }],
+            onFilter: (v, p) => (p.category ?? '') === v,
+            render: (_, p) => CATEGORIES.find((c) => c.id === p.category)?.label ?? '?',
+          },
           {
             title: 'H/D',
-            width: 60,
+            key: 'gender',
+            width: 70,
+            filters: [
+              { text: 'H', value: 'M' },
+              { text: 'D', value: 'F' },
+              { text: '? (neurčeno / odhad)', value: '?' },
+            ],
+            onFilter: (v, p) => (v === '?' ? p.gender !== 'M' && p.gender !== 'F' || p.genderSource === 'guess' : p.gender === v),
             render: (_, p) => (
               <Tooltip title={p.genderSource === 'guess' ? 'odhad z příjmení' : p.genderSource}>
                 <span style={{ fontStyle: p.genderSource === 'guess' ? 'italic' : undefined }}>{p.gender === 'F' ? 'D' : p.gender === 'M' ? 'H' : '?'}</span>
               </Tooltip>
             ),
           },
-          { title: 'Oddíl', dataIndex: 'club', width: 160, sorter: (a, b) => (a.club ?? '').localeCompare(b.club ?? '', 'cs') },
+          {
+            title: 'Oddíl',
+            dataIndex: 'club',
+            key: 'club',
+            width: 170,
+            sorter: (a, b) => (a.club ?? '').localeCompare(b.club ?? '', 'cs'),
+            filters: clubOptions.map((c) => ({ text: c || '(bez oddílu)', value: c })),
+            filterSearch: true,
+            onFilter: (v, p) => (p.club ?? '') === v,
+          },
           { title: 'Region', width: 110, render: (_, p) => (p.eligibility === 'in' ? <span className="muted">ano</span> : <RegionTag value={p.eligibility} />) },
           { title: 'Turnajů', dataIndex: 'tournaments', width: 80, align: 'right', sorter: (a, b) => a.tournaments - b.tournaments },
-          { title: 'RŽL Elo', dataIndex: 'rzlElo', width: 80, align: 'right', sorter: (a, b) => (a.rzlElo ?? 0) - (b.rzlElo ?? 0) },
+          {
+            title: (
+              <>
+                RŽL
+                <br />
+                Elo
+              </>
+            ),
+            dataIndex: 'rzlElo',
+            width: 64,
+            align: 'right',
+            sorter: (a, b) => (a.rzlElo ?? 0) - (b.rzlElo ?? 0),
+          },
           { title: <Tooltip title="Elo ČR standard (chess.cz)">LOK Elo</Tooltip>, width: 80, align: 'right', sorter: (a, b) => (a.chesscz?.czeStdElo ?? 0) - (b.chesscz?.czeStdElo ?? 0), render: (_, p) => p.chesscz?.czeStdElo || '' },
           { title: <Tooltip title="Elo ČR rapid (chess.cz)">LOK rapid</Tooltip>, width: 80, align: 'right', sorter: (a, b) => (a.chesscz?.czeRapidElo ?? 0) - (b.chesscz?.czeRapidElo ?? 0), render: (_, p) => p.chesscz?.czeRapidElo || '' },
           {

@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "CI=1 wrangler d1 migrations apply rzl-db --local",
     "dev": "concurrently -k -n worker,web \"npm:dev:worker\" \"npm:dev:web\"",
     "dev:worker": "wrangler dev --port 8788",
     "dev:web": "vite",

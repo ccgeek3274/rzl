@@ -1,7 +1,7 @@
 // Loads a season from D1 and runs the shared rules engine (standings, Elo) + data-quality checks.
 import type { CrGame } from '../../shared/chessresults';
 import { categoryOf, computeElo, computeStandings, mergeSettings, roundPlacements, roundPoints, under8Marker, type EloStep, type SeasonSettings, type StPlayer } from '../../shared/rzl';
-import { fold, rzlId, similarNames } from '../../shared/text';
+import { fold, rzlId, sameRegisteredName, similarNames, splitCrName } from '../../shared/text';
 import type { Issue, ChessczInfo } from '../../shared/types';
 import { fail } from './http';
 import type { SeasonRow } from './importer';
@@ -80,7 +80,7 @@ export async function loadSeason(db: D1Database, seasonId: number) {
   const season = await getSeason(db, seasonId);
   if (await db.prepare('SELECT 1 FROM entries WHERE instance_id IS NULL LIMIT 1').first()) await backfillInstances(db);
   const settings: SeasonSettings = mergeSettings(JSON.parse(season.settings || '{}'));
-  const [rounds, tournaments, entries, players, sp, acks, allPlayers, instances] = await Promise.all([
+  const [rounds, tournaments, entries, players, sp, acks, allPlayers, instances, verdicts, instNames] = await Promise.all([
     db.prepare('SELECT id, ordinal, place, place_key, date FROM rounds WHERE season_id = ? ORDER BY ordinal').bind(seasonId).all<RoundRow>(),
     db
       .prepare(
@@ -112,7 +112,19 @@ export async function loadSeason(db: D1Database, seasonId: number) {
       .prepare('SELECT * FROM player_instances WHERE id IN (SELECT e.instance_id FROM entries e JOIN tournaments t ON t.id = e.tournament_id WHERE t.season_id = ?)')
       .bind(seasonId)
       .all<InstanceRow>(),
+    db.prepare('SELECT lok_id, verdict, cz_name FROM lok_verdicts').all<{ lok_id: number; verdict: string; cz_name: string }>(),
+    db.prepare('SELECT DISTINCT player_id, cr_name, name_key FROM player_instances WHERE player_id IS NOT NULL').all<{ player_id: number; cr_name: string; name_key: string }>(),
   ]);
+  // Names a player appears under in tournaments other than the current one (name change, typos): searchable.
+  const otherNames = new Map<number, string[]>();
+  const nameKeyOf = new Map(allPlayers.results.map((p) => [p.id, p.name_key]));
+  for (const r of instNames.results) {
+    if (r.name_key === nameKeyOf.get(r.player_id)) continue;
+    const { surname, firstName } = splitCrName(r.cr_name);
+    const n = `${surname} ${firstName}`.trim();
+    const list = otherNames.get(r.player_id) ?? otherNames.set(r.player_id, []).get(r.player_id)!;
+    if (!list.includes(n)) list.push(n);
+  }
   const playerMap = new Map(players.results.map((p) => [p.id, p]));
   const stPlayers = new Map<number, StPlayer>(
     players.results.map((p) => [p.id, { id: p.id, eligible: eligibility(p) === 'in', birthYear: p.birth_year }])
@@ -133,6 +145,8 @@ export async function loadSeason(db: D1Database, seasonId: number) {
   const elo = await playersElo(db, settings, [...playerMap.keys()]);
   const postup = new Map(sp.results.map((r) => [r.player_id, r]));
   return {
+    otherNames,
+    lokVerdicts: new Map(verdicts.results.map((v) => [v.lok_id, v])),
     season,
     settings,
     rounds: rounds.results,
@@ -182,6 +196,30 @@ export function chessczOf(p: PlayerRow): ChessczInfo | null {
   return p.chesscz ? JSON.parse(p.chesscz) : null;
 }
 
+/**
+ * Rounds each player of the season has a row in (round id -> "3B"). One person plays one tournament per round, so two
+ * records in the same round are two different people.
+ */
+export function roundsByPlayer(L: LoadedSeason, by: 'player' | 'instance' = 'player'): Map<number, Map<number, string>> {
+  const tById = new Map(L.tournaments.map((t) => [t.id, t]));
+  const out = new Map<number, Map<number, string>>();
+  for (const e of L.entries) {
+    const k = by === 'player' ? e.player_id : e.instance_id;
+    if (k == null) continue;
+    const t = tById.get(e.tournament_id)!;
+    const m = out.get(k) ?? out.set(k, new Map()).get(k)!;
+    m.set(t.round_id, `${L.roundById.get(t.round_id)?.ordinal ?? '?'}${t.grp}`);
+  }
+  return out;
+}
+
+/** Label of a round both have a row in ("3B"), or null. */
+export function sharedRound(a: Map<number, string> | undefined, b: Map<number, string> | undefined): string | null {
+  if (!a || !b) return null;
+  for (const [rid, label] of b) if (a.has(rid)) return label;
+  return null;
+}
+
 /** Standings rows enriched with player data for the UI / exports. */
 export function standingsView(L: LoadedSeason) {
   const y = L.season.start_year;
@@ -192,12 +230,14 @@ export function standingsView(L: LoadedSeason) {
     return {
       ...r,
       name: playerName(p),
+      otherNames: L.otherNames.get(p.id) ?? [],
       lokId: p.lok_id,
       gender: p.gender,
       genderSource: p.gender_source,
       birthYear: p.birth_year,
       category: categoryOf(p.birth_year, y, L.settings.hd8),
-      marker: under8Marker(p.birth_year, p.gender, y),
+      // With a separate HD8 category the H8/D8 marker says nothing more.
+      marker: L.settings.hd8 ? '' : under8Marker(p.birth_year, p.gender, y),
       club: p.club_name,
       rzlElo: steps?.length ? steps[steps.length - 1].after : null,
       lokElo: cz?.czeStdElo || null,
@@ -267,7 +307,7 @@ export function seasonIssues(L: LoadedSeason): Issue[] {
         type: 'entry',
         severity: 'warning',
         title: `${e.cr_name} (${t.link_name}) nenastoupil(a) – neodehrál(a) žádnou partii`,
-        detail: `Zatím se počítá (${e.points_override ?? e.points} b.) a posouvá umístění ostatních. Oficiální tabulka takové řádky vynechává → vyřaďte.`,
+        detail: `Zatím se počítá (${e.points_override ?? e.points} b., umístění v kole) a hráči za ním mají o místo horší umístění. Oficiální tabulka takové řádky vynechává → „Nezapočítávat“.`,
         refs: { entryId: e.id, playerId: e.player_id, tournamentId: e.tournament_id },
       });
     if (e.points_override != null || e.rank_override != null)
@@ -308,7 +348,17 @@ export function seasonIssues(L: LoadedSeason): Issue[] {
     const elig = eligibility(p);
     const cz = chessczOf(p);
     if (p.lok_id && !p.chesscz_at) out.push({ key: `no-chesscz:${p.id}`, type: 'player', severity: 'info', title: `${playerName(p)}: nenačteno z chess.cz`, refs: { playerId: p.id } });
-    if (cz && fold(cz.fullName) !== p.name_key && !sameNameLoose(cz.fullName, p))
+    const verdict = p.lok_id ? L.lokVerdicts.get(p.lok_id) : undefined;
+    if (verdict?.verdict === 'cz-error' && cz && !sameRegisteredName(cz.fullName, playerName(p)))
+      out.push({
+        key: `cz-error:${p.lok_id}`,
+        type: 'player',
+        severity: 'info',
+        title: `${playerName(p)}: na chess.cz je u LOK ${p.lok_id} chybně „${cz.fullName}“`,
+        detail: 'LOK patří tomuto hráči, jméno na chess.cz je chybné – nahlaste oddílu / ŠSČR k opravě. Jméno a pohlaví z chess.cz se nepoužívají.',
+        refs: { playerId: p.id },
+      });
+    else if (!verdict && cz && fold(cz.fullName) !== p.name_key && !sameNameLoose(cz.fullName, p))
       out.push({
         key: `lok-name:${p.id}:${p.lok_id}`,
         type: 'player',
@@ -339,12 +389,15 @@ export function seasonIssues(L: LoadedSeason): Issue[] {
   // Compared against ALL players (earlier seasons too); a known differing birth year rules the pair out.
   const seasonIds = new Set(L.players.keys());
   const seen = new Set<string>();
+  const rounds = roundsByPlayer(L);
   for (const a of L.players.values()) {
     for (const b of L.allPlayers) {
       if (a.id === b.id || (seasonIds.has(b.id) && b.id < a.id)) continue;
       if (a.lok_id && b.lok_id) continue;
       const how = similarNames(a.name_key, b.name_key);
       if (!how) continue;
+      // Both played in the same round: two people.
+      if (sharedRound(rounds.get(a.id), rounds.get(b.id))) continue;
       const by = a.birth_year && b.birth_year ? (a.birth_year === b.birth_year ? 'same' : 'diff') : 'unknown';
       if (by === 'diff' && how !== 'same') continue;
       const ids = [a.id, b.id].sort((x, y) => x - y);
@@ -378,7 +431,8 @@ export function seasonIssues(L: LoadedSeason): Issue[] {
 function sameNameLoose(full: string, p: PlayerRow): boolean {
   const a = fold(full).replace(/[\s-]/g, '');
   const b = fold(p.surname + p.first_name).replace(/[\s-]/g, '');
-  return a === b;
+  const swapped = fold(p.first_name + p.surname).replace(/[\s-]/g, '');
+  return a === b || a === swapped;
 }
 
 /** Per-entry view for the tournament page. */

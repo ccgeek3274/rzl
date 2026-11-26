@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { App } from 'antd';
 import { useSearchParams } from 'react-router-dom';
-import type { ClubDto, InstanceDto, Issue, PlayerDetailDto, SeasonDto, SeasonPlayerDto, StandingDto, SeasonSummary, TournamentDetailDto } from '../../../shared/types';
+import type { ClubDto, InstanceDto, Issue, PlayerDetailDto, SeasonDto, SeasonPlayerDto, StandingDto, SeasonSummary, TournamentDetailDto, HistoryDto } from '../../../shared/types';
 import type { RoundDto } from '../../../shared/types';
 import { api, apiErrorText } from './api';
 
@@ -9,6 +9,7 @@ export const useSeasons = () => useQuery({ queryKey: ['seasons'], queryFn: () =>
 export const useSeason = (id: number) => useQuery({ queryKey: ['season', id], queryFn: () => api.get<SeasonDto>(`/seasons/${id}`) });
 export const useStandings = (id: number) =>
   useQuery({ queryKey: ['season', id, 'standings'], queryFn: () => api.get<{ rounds: RoundDto[]; bestN: number; rows: StandingDto[] }>(`/seasons/${id}/standings`) });
+export const useHistory = (id: number) => useQuery({ queryKey: ['season', id, 'history'], queryFn: () => api.get<HistoryDto[]>(`/seasons/${id}/history`) });
 export const useIssues = (id: number) => useQuery({ queryKey: ['season', id, 'issues'], queryFn: () => api.get<Issue[]>(`/seasons/${id}/issues`) });
 export const useSeasonPlayers = (id: number) => useQuery({ queryKey: ['season', id, 'players'], queryFn: () => api.get<SeasonPlayerDto[]>(`/seasons/${id}/players`) });
 export const useClubs = (seasonId?: number) => useQuery({ queryKey: ['clubs', seasonId ?? 0], queryFn: () => api.get<ClubDto[]>(`/clubs${seasonId ? `?season=${seasonId}` : ''}`) });

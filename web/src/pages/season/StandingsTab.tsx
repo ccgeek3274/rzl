@@ -77,7 +77,7 @@ export function StandingsTab() {
     }
     if (clubs.length) r = r.filter((x) => clubs.includes(x.club ?? ''));
     if (years.length) r = r.filter((x) => years.includes(x.birthYear ?? 0));
-    if (q.trim()) r = r.filter((x) => fold(x.name).includes(fold(q)) || String(x.lokId ?? '').includes(q.trim()) || matchesRzlId(q, x.playerId));
+    if (q.trim()) r = r.filter((x) => [x.name, ...x.otherNames].some((n) => fold(n).includes(fold(q))) || String(x.lokId ?? '').includes(q.trim()) || matchesRzlId(q, x.playerId));
     return r;
   }, [all, cat, girls, q, clubs, years]);
 
@@ -94,18 +94,26 @@ export function StandingsTab() {
       width: 210,
       ellipsis: true,
       render: (_, r) => (
-        <PlayerName
-          name={r.name}
-          gender={r.gender}
-          genderSource={r.genderSource}
-          onClick={() => drawer.open(r.playerId)}
-          style={{ color: r.postup ? POSTUP_COLOR[r.postup] : undefined, fontWeight: r.postup ? 600 : undefined }}
-          extra={r.marker && <Tag style={{ fontSize: 10, lineHeight: '16px', padding: '0 3px', marginInlineEnd: 0 }}>{r.marker}</Tag>}
-        />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <PlayerName
+            name={r.name}
+            gender={r.gender}
+            genderSource={r.genderSource}
+            onClick={() => drawer.open(r.playerId)}
+            style={{ color: r.postup ? POSTUP_COLOR[r.postup] : undefined, fontWeight: r.postup ? 600 : undefined }}
+          />
+          {r.marker && <Tag style={{ fontSize: 10, lineHeight: '16px', padding: '0 3px', marginInlineEnd: 0, marginLeft: 'auto' }}>{r.marker}</Tag>}
+        </div>
       ),
     },
     {
-      title: <Tooltip title="Vlastní Elo RŽL (Rtg v posledním turnaji + změna)">RŽL Elo</Tooltip>,
+      title: (
+        <Tooltip title="Vlastní Elo RŽL (Rtg v posledním turnaji + změna)">
+          RŽL
+          <br />
+          Elo
+        </Tooltip>
+      ),
       key: 'rzlElo',
       dataIndex: 'rzlElo',
       width: 62,

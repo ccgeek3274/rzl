@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Alert, Button, Descriptions, Divider, Drawer, Form, Input, InputNumber, Modal, Popover, Radio, Select, Space, Table, Tag, Tooltip, Typography } from 'antd';
-import { CheckOutlined, CloudSyncOutlined, MergeCellsOutlined, SaveOutlined, UserAddOutlined, UserSwitchOutlined } from '@ant-design/icons';
+import { Alert, Button, Descriptions, Divider, Drawer, Form, Input, InputNumber, Modal, Popover, Radio, Segmented, Select, Space, Table, Tag, Tooltip, Typography } from 'antd';
+import type { PlayerDetailDto, PlayerGameDto } from '../../../shared/types';
+import { CheckOutlined, CloudSyncOutlined, RightOutlined, MergeCellsOutlined, SaveOutlined, UserAddOutlined, UserSwitchOutlined } from '@ant-design/icons';
 import { CATEGORIES } from '../../../shared/rzl';
 import { api } from '../lib/api';
 import { useAction, useClubs, usePlayer, usePlayerDrawer } from '../lib/hooks';
@@ -12,10 +13,56 @@ import { PlayerName } from './PlayerName';
 import { instId, rzlId } from '../../../shared/text';
 import { InstanceStatusTag } from '../pages/season/IdentityTab';
 
+type Result = PlayerDetailDto['results'][number];
+
+const SCORE = (x: number | null) => (x === 1 ? '1' : x === 0.5 ? '½' : x === 0 ? '0' : '');
+
+/** Games of one tournament row (expanded under the result). */
+function GamesTable({ games, onOpen }: { games: PlayerGameDto[]; onOpen: (playerId: number) => void }) {
+  return (
+    <Table
+      size="small"
+      rowKey="round"
+      pagination={false}
+      dataSource={games}
+      style={{ maxWidth: 520 }}
+      columns={[
+        { title: 'Kolo', dataIndex: 'round', width: 50, align: 'right' },
+        {
+          title: 'Soupeř',
+          render: (_, g) =>
+            g.kind === 'bye' ? (
+              <span className="muted">{g.score ? 'volno (bod bez partie)' : 'nehrál(a)'}</span>
+            ) : g.kind === 'none' ? (
+              <span className="muted">–</span>
+            ) : g.oppPlayerId ? (
+              <a onClick={() => onOpen(g.oppPlayerId!)}>{g.oppName}</a>
+            ) : (
+              g.oppName
+            ),
+        },
+        { title: 'Rtg', width: 60, align: 'right', render: (_, g) => g.oppRtg ?? '' },
+        { title: 'Barva', width: 60, render: (_, g) => (g.color === 'w' ? 'bílé' : g.color === 'b' ? 'černé' : '') },
+        {
+          title: 'Výsledek',
+          width: 90,
+          align: 'right',
+          render: (_, g) => (
+            <span>
+              <b>{SCORE(g.score)}</b>
+              {g.kind === 'forfeit' && <span className="muted"> kontum.</span>}
+            </span>
+          ),
+        },
+      ]}
+    />
+  );
+}
+
 const catLabel = (c: string | null) => CATEGORIES.find((x) => x.id === c)?.label ?? '—';
 
 export function PlayerDrawer({ seasonId }: { seasonId: number }) {
-  const { id, close } = usePlayerDrawer();
+  const { id, close, open } = usePlayerDrawer();
   const { data, isLoading } = usePlayer(id, seasonId);
   const { data: clubs = [] } = useClubs();
   const [form] = Form.useForm();
@@ -59,6 +106,10 @@ export function PlayerDrawer({ seasonId }: { seasonId: number }) {
   const assign = useAction((v: { id: number; playerId: number }) => api.post(`/instances/${v.id}/assign`, { playerId: v.playerId }), 'Instance přesunuta');
   const split = useAction((iid: number) => api.post<{ playerId: number }>(`/instances/${iid}/new-player`), 'Založen nový hráč');
   const confirmInst = useAction((iid: number) => api.post('/instances/confirm', { ids: [iid] }), 'Potvrzeno');
+
+  const [allSeasons, setAllSeasons] = useState(false);
+  const seasonCount = new Set(data?.results.map((r) => r.seasonId)).size;
+  const results = (data?.results ?? []).filter((r) => allSeasons || seasonCount < 2 || r.seasonId === seasonId);
 
   const cz = p?.chesscz;
   const czNameDiffers = cz && cz.fullName.replace(/\s+/g, ' ') !== `${p!.surname} ${p!.firstName}`;
@@ -217,7 +268,17 @@ export function PlayerDrawer({ seasonId }: { seasonId: number }) {
             pagination={false}
             dataSource={data!.instances}
             columns={[
-              { title: 'ID', width: 64, render: (_, i) => <span className="num muted">{instId(i.id)}</span> },
+              {
+                title: 'ID',
+                width: 64,
+                render: (_, i) => (
+                  <Tooltip title="Otevřít v Párování">
+                    <Link className="num" to={`/s/${seasonId}/parovani?q=${instId(i.id)}`}>
+                      {instId(i.id)}
+                    </Link>
+                  </Tooltip>
+                ),
+              },
               {
                 title: 'Jméno, LOK, oddíl v turnaji',
                 render: (_, i) => (
@@ -271,21 +332,47 @@ export function PlayerDrawer({ seasonId }: { seasonId: number }) {
           />
 
           <Divider titlePlacement="start" style={{ margin: '20px 0 8px' }}>
-            Výsledky a RŽL Elo
+            Výsledky, RŽL body a RŽL Elo
           </Divider>
+          {seasonCount > 1 && (
+            <Segmented
+              size="small"
+              style={{ marginBottom: 8 }}
+              value={allSeasons ? 'all' : 'season'}
+              onChange={(v) => setAllSeasons(v === 'all')}
+              options={[
+                { value: 'season', label: `Tato sezóna (${data!.results.filter((r) => r.seasonId === seasonId).length})` },
+                { value: 'all', label: `Všechny sezóny (${data!.results.length})` },
+              ]}
+            />
+          )}
           <Table
             size="small"
             rowKey="entryId"
             pagination={false}
-            dataSource={data!.results}
+            dataSource={results}
             rowClassName={(r) => (r.excluded ? 'row-excluded' : '')}
+            expandable={{
+              expandedRowRender: (r) => <GamesTable games={r.games} onOpen={(pid) => open(pid)} />,
+              rowExpandable: (r) => r.games.length > 0,
+              expandIcon: ({ expanded, expandable, onExpand, record }) =>
+                expandable ? (
+                  <Tooltip title={expanded ? 'Skrýt partie' : 'Zobrazit partie'}>
+                    <RightOutlined
+                      onClick={(e) => onExpand(record, e)}
+                      style={{ cursor: 'pointer', fontSize: 11, color: '#8a94a0', transition: 'transform .2s', transform: expanded ? 'rotate(90deg)' : undefined }}
+                    />
+                  </Tooltip>
+                ) : null,
+            }}
             columns={[
-              { title: 'Datum', render: (_, r) => <span className="num">{fmtDate(r.date)}</span>, width: 90 },
+              { title: 'Datum', render: (_, r) => <span className="num">{fmtDate(r.date)}</span>, width: 84 },
+              ...(allSeasons && seasonCount > 1 ? [{ title: 'Sezóna', width: 70, render: (_: unknown, r: Result) => <span className="muted">{r.seasonName}</span> }] : []),
               {
                 title: 'Turnaj',
                 render: (_, r) => (
                   <Link to={`/s/${r.seasonId}/turnaje/${r.tournamentId}`} onClick={close}>
-                    {r.linkName}
+                    <span className={`grp-${r.group}`}>{r.linkName}</span>
                   </Link>
                 ),
               },
@@ -299,15 +386,47 @@ export function PlayerDrawer({ seasonId }: { seasonId: number }) {
                   </Tooltip>
                 ),
               },
-              { title: 'Body', align: 'right', render: (_, r) => fmtNum(r.points) },
-              { title: 'Poř.', align: 'right', dataIndex: 'rank' },
-              { title: 'Rtg', align: 'right', render: (_, r) => r.rtg ?? '–' },
+              { title: 'Body', align: 'right', width: 52, render: (_, r) => fmtNum(r.points) },
+              { title: 'Poř.', align: 'right', width: 44, dataIndex: 'rank' },
+              {
+                title: (
+                  <Tooltip title="RŽL body za turnaj; tučně započítané do pořadí (nejlepší výsledky), šedě nezapočítané">
+                    RŽL
+                    <br />
+                    body
+                  </Tooltip>
+                ),
+                align: 'right',
+                width: 56,
+                render: (_, r) =>
+                  r.rzl ? (
+                    <span className={r.rzl.counted ? 'res-counted' : 'res-dropped'} style={r.rzl.counted ? { background: '#e6f4ff', padding: '1px 6px', borderRadius: 3 } : undefined}>
+                      {fmtNum(r.rzl.points)}
+                    </span>
+                  ) : (
+                    <span className="muted">–</span>
+                  ),
+              },
+              {
+                title: (
+                  <Tooltip title="Umístění v RŽL (pořadí v turnaji přepočtené přes skupiny A/B/C)">
+                    RŽL
+                    <br />
+                    umíst.
+                  </Tooltip>
+                ),
+                align: 'right',
+                width: 56,
+                render: (_, r) => (r.rzl ? <span className={r.rzl.counted ? 'res-counted' : 'res-dropped'}>{r.rzl.placement}</span> : ''),
+              },
+              { title: 'Rtg', align: 'right', width: 52, render: (_, r) => r.rtg ?? '–' },
               {
                 title: 'Elo Δ',
                 align: 'right',
+                width: 52,
                 render: (_, r) => (r.eloDelta == null ? '' : `${r.eloDelta >= 0 ? '+' : ''}${Math.round(r.eloDelta)}`),
               },
-              { title: 'Elo po', align: 'right', dataIndex: 'eloAfter' },
+              { title: 'Elo po', align: 'right', width: 56, dataIndex: 'eloAfter' },
             ]}
           />
         </>

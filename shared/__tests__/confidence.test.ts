@@ -5,9 +5,11 @@ const cr = { name: 'Novák, Petr', lokId: 99001, birthYear: null, clubId: 4 };
 const p = { name: 'Novák Petr', lokId: 99001, birthYear: 2012, clubId: 4, czName: 'Novák Petr' };
 
 describe('pairingConfidence', () => {
+  it('a candidate playing in the same round is ruled out', () =>
+    expect(pairingConfidence({ how: null, sameRound: '3B', cr, player: p }).score).toBe(0));
   it('new player with LOK is sure', () => expect(pairingConfidence({ how: 'new', cr, player: p }).level).toBe('high'));
   it('new player whose LOK has another name on chess.cz needs a look', () =>
-    expect(pairingConfidence({ how: 'new', cr, player: { ...p, czName: 'Dvořák Petr' } }).level).toBe('medium'));
+    expect(pairingConfidence({ how: 'new', cr, player: { ...p, czName: 'Dvořák Petr' } }).level).toBe('low'));
   it('new player without LOK is not sure', () =>
     expect(pairingConfidence({ how: 'new', cr: { ...cr, lokId: null }, player: { ...p, lokId: null } }).level).toBe('medium'));
   it('same LOK, same name, same club', () => expect(pairingConfidence({ how: 'lok', cr, player: p }).score).toBe(100));
