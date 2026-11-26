@@ -189,6 +189,7 @@ players.get('/:id', async (c) => {
       };
     }),
   };
+  if (!c.get('admin')) dto.player.note = null; // operator notes are internal
   return c.json(dto);
 });
 

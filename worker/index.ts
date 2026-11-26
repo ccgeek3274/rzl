@@ -6,12 +6,17 @@ import { tournaments } from './routes/tournaments';
 import { clubs } from './routes/clubs';
 import { instances } from './routes/instances';
 import type { AppEnv } from './types';
+import { authMiddleware, login, logout } from './lib/auth';
 
 // Only /api/* reaches the Worker (assets.run_worker_first); everything else is the SPA.
-// TODO before deploy: port auth from ../vedouci-souteze (Google OAuth + JWT cookie); local version is open.
+// Without login the API is read-only (worker/lib/auth.ts).
 const app = new Hono<AppEnv>().basePath('/api/v1');
 
+app.use('*', authMiddleware);
 app.get('/health', (c) => c.json({ status: 'ok' }));
+app.get('/auth/me', (c) => c.json({ admin: c.get('admin') }));
+app.post('/auth/login', login);
+app.post('/auth/logout', logout);
 app.route('/seasons', seasons);
 app.route('/players', players);
 app.route('/clubs', clubs);

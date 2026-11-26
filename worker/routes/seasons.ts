@@ -173,7 +173,8 @@ seasons.post('/:id/genders', async (c) => {
 
 seasons.get('/:id/players', async (c) => {
   const L = await loadSeason(c.env.DB, Number(c.req.param('id')));
-  return c.json(seasonPlayersView(L));
+  // Operator notes are internal.
+  return c.json(seasonPlayersView(L).map((p) => (c.get('admin') ? p : { ...p, note: null })));
 });
 
 seasons.put('/:id/players/:pid', async (c) => {

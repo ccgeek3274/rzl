@@ -3,7 +3,7 @@ import { App } from 'antd';
 import { useSearchParams } from 'react-router-dom';
 import type { ClubDto, InstanceDto, Issue, PlayerDetailDto, SeasonDto, SeasonPlayerDto, StandingDto, SeasonSummary, TournamentDetailDto, HistoryDto } from '../../../shared/types';
 import type { RoundDto } from '../../../shared/types';
-import { api, apiErrorText } from './api';
+import { api, ApiError, apiErrorText } from './api';
 
 export const useSeasons = () => useQuery({ queryKey: ['seasons'], queryFn: () => api.get<SeasonSummary[]>('/seasons') });
 export const useSeason = (id: number) => useQuery({ queryKey: ['season', id], queryFn: () => api.get<SeasonDto>(`/seasons/${id}`) });
@@ -34,13 +34,18 @@ export function useInvalidateAll() {
 export function useAction<TVars, TRes = unknown>(fn: (v: TVars) => Promise<TRes>, successText?: string | ((r: TRes) => string)) {
   const { message } = App.useApp();
   const invalidate = useInvalidateAll();
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: fn,
     onSuccess: (r) => {
       invalidate();
       if (successText) message.success(typeof successText === 'function' ? successText(r) : successText);
     },
-    onError: (e) => message.error(apiErrorText(e) ?? 'Chyba'),
+    onError: (e) => {
+      message.error(apiErrorText(e) ?? 'Chyba');
+      // Session expired / logged out elsewhere: switch the UI to browsing.
+      if (e instanceof ApiError && e.status === 401) qc.invalidateQueries({ queryKey: ['auth'] });
+    },
   });
 }
 
@@ -64,3 +69,7 @@ export function usePlayerDrawer() {
 }
 
 export const crUrl = (tnr: number, art = 1) => `https://chess-results.com/tnr${tnr}.aspx?lan=5&art=${art}&turdet=YES`;
+
+/** Operator mode (logged in with the shared password); otherwise the app is read-only. */
+export const useAuth = () => useQuery({ queryKey: ['auth'], queryFn: () => api.get<{ admin: boolean }>('/auth/me'), staleTime: 5 * 60_000 });
+export const useIsAdmin = () => useAuth().data?.admin ?? false;

@@ -25,8 +25,14 @@ Pravidla a ověření proti oficiálním PDF: `doc/pravidla.md`. Zdrojová PDF: 
 
 ## Konvence
 - Kód a komentáře anglicky, UI a chybové hlášky API česky.
-- Zatím jen lokální verze bez přihlášení. Před nasazením převzít auth z ../vedouci-souteze (Google OAuth + JWT cookie),
-  vytvořit D1 (`wrangler d1 create rzl-db`) a doplnit `database_id` + `ENVIRONMENT` ve `wrangler.jsonc`.
+- **Dva režimy** (`worker/lib/auth.ts`): bez přihlášení jen prohlížení (záložky Turnaje, Pořadí, Hráči; API odmítne
+  vše kromě GET a operátorské GETy – instance, issues, history, hledání hráčů; poznámky hráčů se nevracejí). Plný režim =
+  jedno sdílené heslo, žádní uživatelé: secret `ADMIN_PASSWORD` (`wrangler secret put ADMIN_PASSWORD`, lokálně `.dev.vars`,
+  nikdy v repu). Přihlášení nastaví podepsanou cookie (HMAC klíčem z hesla, 30 dní, HttpOnly/Secure/SameSite=Strict);
+  pokusy omezuje Cloudflare rate limiting (`LOGIN_LIMIT` ve `wrangler.jsonc`). Frontend: `useIsAdmin()`, zámek v hlavičce
+  (`AuthButton`); každý nový editační prvek skrýt pro režim prohlížení.
+- Před nasazením: vytvořit D1 (`wrangler d1 create rzl-db`), doplnit `database_id` a `ENVIRONMENT` ve `wrangler.jsonc`,
+  nastavit secret `ADMIN_PASSWORD`.
 
 ## Gotchas
 - chess-results: `www.` má rozbitý certifikát → vždy `https://chess-results.com/...` (přesměruje na S1–S3 node).

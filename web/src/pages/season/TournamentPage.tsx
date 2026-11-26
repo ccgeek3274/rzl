@@ -4,7 +4,8 @@ import { Button, Card, Descriptions, Form, Input, InputNumber, Modal, Popover, S
 import { EditOutlined, ExportOutlined, ReloadOutlined, UserAddOutlined, UserSwitchOutlined } from '@ant-design/icons';
 import type { EntryDto } from '../../../../shared/types';
 import { api } from '../../lib/api';
-import { crUrl, useAction, usePlayerDrawer, useTournament } from '../../lib/hooks';
+import { crUrl, useAction, useIsAdmin, usePlayerDrawer, useTournament } from '../../lib/hooks';
+import { ChevronExpand } from '../../components/ExpandIcon';
 import { fmtDate, fmtNum, fmtTs } from '../../lib/format';
 import { PlayerPicker } from '../../components/PlayerPicker';
 import { RegionTag } from '../../components/RegionTag';
@@ -42,6 +43,7 @@ export function TournamentPage() {
   const tid = Number(useParams().tournamentId);
   const { data, isLoading } = useTournament(tid);
   const drawer = usePlayerDrawer();
+  const admin = useIsAdmin();
   const [editing, setEditing] = useState<EntryDto | null>(null);
   const [rowOnly, setRowOnly] = useState(false);
   const [form] = Form.useForm();
@@ -66,9 +68,11 @@ export function TournamentPage() {
             <Button icon={<ExportOutlined />} href={t ? crUrl(t.tnr) : undefined} target="_blank">
               chess-results
             </Button>
-            <Button icon={<ReloadOutlined />} loading={refetch.isPending} onClick={() => refetch.mutate(undefined)}>
-              Stáhnout znovu
-            </Button>
+            {admin && (
+              <Button icon={<ReloadOutlined />} loading={refetch.isPending} onClick={() => refetch.mutate(undefined)}>
+                Stáhnout znovu
+              </Button>
+            )}
           </Space>
         </Space>
         <Descriptions
@@ -93,6 +97,7 @@ export function TournamentPage() {
         scroll={{ x: 1200 }}
         rowClassName={(e) => (e.excluded ? 'row-excluded' : e.player?.eligibility !== 'in' ? 'row-out' : '')}
         expandable={{ expandedRowRender: (e) => <GamesList e={e} bySnr={bySnr} />, expandRowByClick: false }}
+        components={{ ExpandIcon: ChevronExpand }}
         columns={[
           {
             title: 'Poř.',
@@ -178,7 +183,7 @@ export function TournamentPage() {
                 ) : (
                   <Tag color="red">nepřiřazeno</Tag>
                 )}
-                <Space size={4} style={{ fontSize: 12 }}>
+                {admin && <Space size={4} style={{ fontSize: 12 }}>
                   {e.instance && (
                     <Tooltip title={e.instance.reason}>
                       <Link to={`/s/${seasonId}/parovani`} className="muted num">
@@ -192,15 +197,15 @@ export function TournamentPage() {
                       <Tag color="blue">jen tento řádek</Tag>
                     </Tooltip>
                   )}
-                </Space>
+                </Space>}
               </Space>
             ),
           },
-          {
+          ...(!admin ? [] : [{
             title: '',
             width: 110,
-            fixed: 'right',
-            render: (_, e) => (
+            fixed: 'right' as const,
+            render: (_: unknown, e: EntryDto) => (
               <Space size={0}>
                 <Popover
                   trigger="click"
@@ -242,7 +247,7 @@ export function TournamentPage() {
                 </Tooltip>
               </Space>
             ),
-          },
+          }]),
         ]}
       />
       <Modal

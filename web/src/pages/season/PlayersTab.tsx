@@ -7,7 +7,7 @@ import { CATEGORIES } from '../../../../shared/rzl';
 import { fold, matchesRzlId, rzlId } from '../../../../shared/text';
 import { PlayerName } from '../../components/PlayerName';
 import { api } from '../../lib/api';
-import { usePlayerDrawer, useSeasonPlayers } from '../../lib/hooks';
+import { useIsAdmin, usePlayerDrawer, useSeasonPlayers } from '../../lib/hooks';
 import { useBatch } from '../../components/BatchRunner';
 import { eloRefreshStep } from '../../lib/eloRefresh';
 import { RegionTag } from '../../components/RegionTag';
@@ -20,6 +20,7 @@ export function PlayersTab() {
   const { data = [], isLoading } = useSeasonPlayers(id);
   const drawer = usePlayerDrawer();
   const batch = useBatch();
+  const admin = useIsAdmin();
   const [filter, setFilter] = useState<Filter>('all');
   const [q, setQ] = useState('');
 
@@ -58,7 +59,7 @@ export function PlayersTab() {
           onChange={(v) => setFilter(v as Filter)}
           options={[
             { value: 'all', label: `Všichni (${data.length})` },
-            { value: 'issues', label: `S problémem (${n('issues')})` },
+            ...(admin ? [{ value: 'issues', label: `S problémem (${n('issues')})` }] : []),
             { value: 'in', label: `V regionu (${n('in')})` },
             { value: 'undecided', label: `Region ? (${n('undecided')})` },
             { value: 'out', label: `Mimo (${n('out')})` },
@@ -67,6 +68,8 @@ export function PlayersTab() {
           ]}
         />
         <Input.Search allowClear placeholder="Hledat jméno / LOK / RŽL ID" style={{ width: 240 }} onChange={(e) => setQ(e.target.value)} />
+        {admin && (
+        <>
         <Button icon={<TeamOutlined />} disabled={batch.running} onClick={() => batch.loop('Doplňuji údaje hráčů', () => api.post(`/seasons/${id}/enrich`, { limit: 10 }))}>
           Doplnit údaje hráčů
         </Button>
@@ -75,6 +78,8 @@ export function PlayersTab() {
             Aktualizovat Ela
           </Button>
         </Tooltip>
+        </>
+        )}
       </Space>
       <Table<SeasonPlayerDto>
         size="small"
@@ -169,7 +174,7 @@ export function PlayersTab() {
               return v.some(Boolean) ? <span className="num">{v.map((x) => x || '–').join(' / ')}</span> : '';
             },
           },
-          { title: 'Pozn.', dataIndex: 'note', ellipsis: true },
+          ...(admin ? [{ title: 'Pozn.', dataIndex: 'note', ellipsis: true }] : []),
         ]}
       />
     </>

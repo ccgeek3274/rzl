@@ -6,14 +6,14 @@ import { CATEGORIES, rankRows, seasonCategories, type Category, type StandingRow
 import type { RoundDto, StandingDto } from '../../../../shared/types';
 import { fold, matchesRzlId, rzlId } from '../../../../shared/text';
 import { api } from '../../lib/api';
-import { useAction, usePlayerDrawer, useSeason, useStandings } from '../../lib/hooks';
+import { useAction, useIsAdmin, usePlayerDrawer, useSeason, useStandings } from '../../lib/hooks';
 import { PlayerName } from '../../components/PlayerName';
 import { downloadCsv, fmtDate, fmtNum } from '../../lib/format';
 import { useSeasonId } from './SeasonLayout';
 
 const POSTUP_COLOR: Record<string, string> = { '1.10': '#cf1322', '1.2': '#389e0d' };
 
-function RoundHeader({ seasonId, round }: { seasonId: number; round: RoundDto }) {
+function RoundHeader({ seasonId, round, editable }: { seasonId: number; round: RoundDto; editable: boolean }) {
   const [open, setOpen] = useState(false);
   const [val, setVal] = useState(round.place);
   const save = useAction((place: string) => api.patch(`/seasons/${seasonId}/rounds/${round.id}`, { place }), 'Přejmenováno');
@@ -24,7 +24,7 @@ function RoundHeader({ seasonId, round }: { seasonId: number; round: RoundDto })
         <Tooltip title={`${round.ordinal}. kolo · ${round.place} · ${fmtDate(round.date)}`}>
           <span className="round-name">{round.place}</span>
         </Tooltip>
-        <Popover
+        {editable && <Popover
           open={open}
           onOpenChange={(o) => {
             setOpen(o);
@@ -42,7 +42,7 @@ function RoundHeader({ seasonId, round }: { seasonId: number; round: RoundDto })
           }
         >
           <EditOutlined className="round-edit" />
-        </Popover>
+        </Popover>}
       </div>
       <div className="muted" style={{ fontSize: 11, fontWeight: 400 }}>
         {fmtDate(round.date)}
@@ -59,6 +59,7 @@ export function StandingsTab() {
   const { data, isLoading } = useStandings(id);
   const { data: season } = useSeason(id);
   const drawer = usePlayerDrawer();
+  const admin = useIsAdmin();
   const [cat, setCat] = useState<'all' | Category>('all');
   const [girls, setGirls] = useState(false);
   const [q, setQ] = useState('');
@@ -159,7 +160,7 @@ export function StandingsTab() {
       ],
     },
     ...playedRounds.map((rd) => ({
-      title: <RoundHeader seasonId={id} round={rd} />,
+      title: <RoundHeader seasonId={id} round={rd} editable={admin} />,
       key: `r${rd.id}`,
       children: [
         {

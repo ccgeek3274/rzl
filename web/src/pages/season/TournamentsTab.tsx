@@ -3,7 +3,7 @@ import { Button, Card, Dropdown, Space, Table, Tag, Tooltip, Typography } from '
 import { CloudDownloadOutlined, ExportOutlined, ReloadOutlined, SearchOutlined, TeamOutlined } from '@ant-design/icons';
 import type { RoundDto, TournamentDto } from '../../../../shared/types';
 import { api } from '../../lib/api';
-import { crUrl, useAction, useSeason } from '../../lib/hooks';
+import { crUrl, useAction, useIsAdmin, useSeason } from '../../lib/hooks';
 import { fmtDate, fmtTs } from '../../lib/format';
 import { eloRefreshStep } from '../../lib/eloRefresh';
 import { useBatch } from '../../components/BatchRunner';
@@ -11,7 +11,7 @@ import { useSeasonId } from './SeasonLayout';
 
 const GROUPS = ['A', 'B', 'C'];
 
-function TournamentCell({ t, seasonId, onFetch }: { t?: TournamentDto; seasonId: number; onFetch: (t: TournamentDto) => void }) {
+function TournamentCell({ t, seasonId, onFetch }: { t?: TournamentDto; seasonId: number; onFetch?: (t: TournamentDto) => void }) {
   if (!t) return <span className="muted">—</span>;
   const status =
     t.status === 'fetched' ? (
@@ -30,9 +30,11 @@ function TournamentCell({ t, seasonId, onFetch }: { t?: TournamentDto; seasonId:
         {status}
       </Space>
       <Space size={2}>
-        <Tooltip title={t.status === 'fetched' ? 'Stáhnout znovu z chess-results' : 'Stáhnout z chess-results'}>
-          <Button size="small" type="text" icon={t.status === 'fetched' ? <ReloadOutlined /> : <CloudDownloadOutlined />} onClick={() => onFetch(t)} />
-        </Tooltip>
+        {onFetch && (
+          <Tooltip title={t.status === 'fetched' ? 'Stáhnout znovu z chess-results' : 'Stáhnout z chess-results'}>
+            <Button size="small" type="text" icon={t.status === 'fetched' ? <ReloadOutlined /> : <CloudDownloadOutlined />} onClick={() => onFetch(t)} />
+          </Tooltip>
+        )}
         <Tooltip title="Otevřít na chess-results">
           <Button size="small" type="text" icon={<ExportOutlined />} href={crUrl(t.tnr)} target="_blank" />
         </Tooltip>
@@ -48,6 +50,7 @@ export function TournamentsTab() {
   const id = useSeasonId();
   const { data, isLoading } = useSeason(id);
   const batch = useBatch();
+  const admin = useIsAdmin();
   const discover = useAction(() => api.post<{ total: number; added: number }>(`/seasons/${id}/discover`), (r) => `Nalezeno ${r.total} turnajů, nových ${r.added}`);
   const fetchOne = useAction(
     (t: TournamentDto) => api.post<{ players: number; created: number }>(`/tournaments/${t.id}/fetch${t.hasRaw && t.status !== 'fetched' ? '?stored=1' : ''}`),
@@ -76,6 +79,7 @@ export function TournamentsTab() {
   return (
     <>
       {batch.view}
+      {admin && (
       <Card size="small" style={{ marginBottom: 12 }}>
         <Space wrap>
           <Button icon={<SearchOutlined />} loading={discover.isPending} onClick={() => discover.mutate(undefined)}>
@@ -109,6 +113,7 @@ export function TournamentsTab() {
           </Typography.Text>
         </Space>
       </Card>
+      )}
       <Table
         size="small"
         loading={isLoading}
@@ -117,10 +122,10 @@ export function TournamentsTab() {
         dataSource={rows}
         columns={[
           { title: 'Kolo', width: 60, render: (_, r) => <b>{r.round.ordinal}.</b> },
-          {
+          ...(!admin ? [] : [{
             title: '',
             width: 130,
-            render: (_, r: { byGroup: Record<string, TournamentDto> }) => {
+            render: (_: unknown, r: { byGroup: Record<string, TournamentDto> }) => {
               const list = GROUPS.map((g) => r.byGroup[g]).filter(Boolean);
               const todo = list.filter((t) => t.status !== 'fetched');
               if (!todo.length) return null;
@@ -133,7 +138,7 @@ export function TournamentsTab() {
                 </Tooltip>
               );
             },
-          },
+          }]),
           {
             title: 'Místo a datum',
             width: 200,
@@ -147,7 +152,7 @@ export function TournamentsTab() {
           ...GROUPS.map((g) => ({
             title: <span className={`grp-${g}`}>Turnaj {g}</span>,
             render: (_: unknown, r: { byGroup: Record<string, TournamentDto> }) => (
-              <TournamentCell t={r.byGroup[g]} seasonId={id} onFetch={(t) => fetchOne.mutate(t)} />
+              <TournamentCell t={r.byGroup[g]} seasonId={id} onFetch={admin ? (t) => fetchOne.mutate(t) : undefined} />
             ),
           })),
         ]}

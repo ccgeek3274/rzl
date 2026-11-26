@@ -10,6 +10,7 @@ import { ClubsTab } from './pages/season/ClubsTab';
 import { SettingsTab } from './pages/season/SettingsTab';
 import { TournamentPage } from './pages/season/TournamentPage';
 import { LoadingBar } from './components/LoadingBar';
+import { AuthButton } from './components/AuthButton';
 
 export function App() {
   return (
@@ -19,6 +20,7 @@ export function App() {
         <Link to="/" className="app-brand">
           <span style={{ fontSize: 22 }}>♞</span> RŽL · evidence výsledků
         </Link>
+        <AuthButton />
       </header>
       <main className="app-content">
         <Routes>

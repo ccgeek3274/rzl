@@ -2,12 +2,13 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Alert, Button, Descriptions, Divider, Drawer, Form, Input, InputNumber, Modal, Popover, Radio, Segmented, Select, Space, Table, Tag, Tooltip, Typography } from 'antd';
 import type { PlayerDetailDto, PlayerGameDto } from '../../../shared/types';
-import { CheckOutlined, CloudSyncOutlined, RightOutlined, MergeCellsOutlined, SaveOutlined, UserAddOutlined, UserSwitchOutlined } from '@ant-design/icons';
+import { CheckOutlined, CloudSyncOutlined, MergeCellsOutlined, SaveOutlined, UserAddOutlined, UserSwitchOutlined } from '@ant-design/icons';
 import { CATEGORIES } from '../../../shared/rzl';
 import { api } from '../lib/api';
-import { useAction, useClubs, usePlayer, usePlayerDrawer } from '../lib/hooks';
+import { useAction, useClubs, useIsAdmin, usePlayer, usePlayerDrawer } from '../lib/hooks';
 import { fmtDate, fmtNum, fmtTs, INSTANCE_HOW } from '../lib/format';
 import { PlayerPicker } from './PlayerPicker';
+import { ChevronExpand } from './ExpandIcon';
 import { RegionTag } from './RegionTag';
 import { PlayerName } from './PlayerName';
 import { instId, rzlId } from '../../../shared/text';
@@ -64,6 +65,7 @@ const catLabel = (c: string | null) => CATEGORIES.find((x) => x.id === c)?.label
 export function PlayerDrawer({ seasonId }: { seasonId: number }) {
   const { id, close, open } = usePlayerDrawer();
   const { data, isLoading } = usePlayer(id, seasonId);
+  const admin = useIsAdmin();
   const { data: clubs = [] } = useClubs();
   const [form] = Form.useForm();
   const [mergeOpen, setMergeOpen] = useState(false);
@@ -71,7 +73,7 @@ export function PlayerDrawer({ seasonId }: { seasonId: number }) {
   const p = data?.player;
 
   useEffect(() => {
-    if (p)
+    if (p && admin)
       form.setFieldsValue({
         surname: p.surname,
         firstName: p.firstName,
@@ -83,7 +85,7 @@ export function PlayerDrawer({ seasonId }: { seasonId: number }) {
         note: p.note,
         postup: p.postup ?? '',
       });
-  }, [p, form]);
+  }, [p, form, admin]);
 
   const save = useAction(async (v: Record<string, unknown>) => {
     const body: Record<string, unknown> = {};
@@ -135,7 +137,7 @@ export function PlayerDrawer({ seasonId }: { seasonId: number }) {
       }
       loading={isLoading}
       extra={
-        <Space>
+        admin && <Space>
           {p?.lokId && (
             <Tooltip title="Znovu načíst z chess.cz: rok narození, pohlaví, Elo ČR a FIDE">
               <Button icon={<CloudSyncOutlined />} loading={chesscz.isPending} onClick={() => chesscz.mutate(undefined)}>
@@ -180,7 +182,7 @@ export function PlayerDrawer({ seasonId }: { seasonId: number }) {
             />
           )}
           {p.lokId && p.chessczAt && !cz && <Alert type="warning" showIcon title={`LOK ${p.lokId} na chess.cz neexistuje`} />}
-          {czNameDiffers && (
+          {admin && czNameDiffers && (
             <Alert
               style={{ marginTop: 8 }}
               type="warning"
@@ -200,6 +202,23 @@ export function PlayerDrawer({ seasonId }: { seasonId: number }) {
               }
             />
           )}
+          {!admin && (
+            <Descriptions
+              size="small"
+              bordered
+              column={3}
+              style={{ marginTop: cz ? 12 : 0 }}
+              items={[
+                { label: 'Oddíl / místo', children: p.club ?? '—', span: 2 },
+                { label: 'Nar.', children: p.birthYear ?? '?' },
+                { label: 'Kategorie', children: catLabel(p.category) },
+                { label: 'Pohlaví', children: p.gender === 'F' ? 'D' : p.gender === 'M' ? 'H' : '?' },
+                { label: 'Region', children: p.eligibility === 'in' ? 'v regionu' : p.eligibility === 'out' ? 'mimo region' : 'nerozhodnuto' },
+              ]}
+            />
+          )}
+          {admin && (
+          <>
           <Divider titlePlacement="start" style={{ margin: '16px 0 8px' }}>
             Údaje v evidenci aplikace
           </Divider>
@@ -331,6 +350,8 @@ export function PlayerDrawer({ seasonId }: { seasonId: number }) {
             ]}
           />
 
+          </>
+          )}
           <Divider titlePlacement="start" style={{ margin: '20px 0 8px' }}>
             Výsledky, RŽL body a RŽL Elo
           </Divider>
@@ -351,19 +372,11 @@ export function PlayerDrawer({ seasonId }: { seasonId: number }) {
             rowKey="entryId"
             pagination={false}
             dataSource={results}
+            components={{ ExpandIcon: ChevronExpand }}
             rowClassName={(r) => (r.excluded ? 'row-excluded' : '')}
             expandable={{
               expandedRowRender: (r) => <GamesTable games={r.games} onOpen={(pid) => open(pid)} />,
               rowExpandable: (r) => r.games.length > 0,
-              expandIcon: ({ expanded, expandable, onExpand, record }) =>
-                expandable ? (
-                  <Tooltip title={expanded ? 'Skrýt partie' : 'Zobrazit partie'}>
-                    <RightOutlined
-                      onClick={(e) => onExpand(record, e)}
-                      style={{ cursor: 'pointer', fontSize: 11, color: '#8a94a0', transition: 'transform .2s', transform: expanded ? 'rotate(90deg)' : undefined }}
-                    />
-                  </Tooltip>
-                ) : null,
             }}
             columns={[
               { title: 'Datum', render: (_, r) => <span className="num">{fmtDate(r.date)}</span>, width: 84 },

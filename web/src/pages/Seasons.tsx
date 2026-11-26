@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button, Card, Col, Empty, Form, Input, Modal, Progress, Row, Typography } from 'antd';
 import { PlusOutlined, TrophyOutlined } from '@ant-design/icons';
 import { api } from '../lib/api';
-import { useAction, useSeasons } from '../lib/hooks';
+import { useAction, useIsAdmin, useSeasons } from '../lib/hooks';
 import { fmtTs } from '../lib/format';
 
 export function SeasonsPage() {
@@ -12,6 +12,7 @@ export function SeasonsPage() {
   const nav = useNavigate();
   const create = useAction((v: { seedTnr: string }) => api.post<{ id: number }>('/seasons', v));
   const [form] = Form.useForm();
+  const admin = useIsAdmin();
 
   return (
     <>
@@ -19,9 +20,11 @@ export function SeasonsPage() {
         <Typography.Title level={3} style={{ margin: 0 }}>
           Sezóny
         </Typography.Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
-          Nová sezóna
-        </Button>
+        {admin && (
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
+            Nová sezóna
+          </Button>
+        )}
       </div>
       {!isLoading && !data.length && <Empty description="Zatím žádná sezóna" />}
       <Row gutter={[16, 16]}>
